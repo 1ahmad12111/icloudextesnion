@@ -40,6 +40,10 @@
     } catch(e) { return null; }
   }
 
+  function qs(selector) {
+    try { return document.querySelector(selector); } catch(e) { return null; }
+  }
+
   function shadowInput(el) {
     if (!el || !el.shadowRoot) return null;
     return el.shadowRoot.querySelector('input, [contenteditable]') || null;
@@ -77,24 +81,32 @@
   }
 
   function findBody() {
-    // Exact XPath provided by user (with correct extra /div)
-    const byXpath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div/div');
-    if (byXpath) return byXpath;
+    // CSS selector provided by user (most reliable)
+    const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
+    if (byCSS) return byCSS;
 
-    // Try parent in case structure shifts
-    const byXpathShort = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
-    if (byXpathShort && byXpathShort.tagName !== 'IFRAME') return byXpathShort;
+    // XPath variants
+    const xpaths = [
+      '/html/body/div[2]/ui-main-pane/div/div/div/div/div/div',
+      '/html/body/div[4]/ui-main-pane/div/div/div/div/div/div',
+      '//ui-main-pane/div/div/div/div/div/div',
+      '//ui-main-pane//div[@contenteditable]',
+    ];
+    for (const xp of xpaths) {
+      const el = xpath(xp);
+      if (el && el.tagName !== 'IFRAME') return el;
+    }
 
     // contenteditable inside ui-main-pane
-    const mainPane = document.querySelector('ui-main-pane');
+    const mainPane = qs('ui-main-pane');
     if (mainPane) {
       const ed = mainPane.querySelector('[contenteditable]');
       if (ed) return ed;
     }
 
-    // Largest visible contenteditable (skip iframes)
+    // Largest visible contenteditable (no iframes)
     const eds = Array.from(document.querySelectorAll('[contenteditable]'))
-      .filter(el => { try { return el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
+      .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
       .sort((a, b) => b.offsetHeight - a.offsetHeight);
     if (eds.length) return eds[0];
 
@@ -102,9 +114,7 @@
   }
 
   function hasMailUI() {
-    return !!(document.querySelector('#app-body') ||
-              document.querySelector('ui-split-container') ||
-              document.querySelector('ui-button'));
+    return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
   }
 
   function findComposeBtn() {
@@ -143,8 +153,12 @@
 
     // Body
     const bodyEl = findBody();
-    if (!bodyEl) return { error: 'Body field not found' };
-
+    if (!bodyEl) {
+      const mp = qs('ui-main-pane');
+      return { error: 'Body not found. ui-main-pane: ' + !!mp +
+        '. Children: ' + (mp ? mp.children.length : 0) +
+        '. CSS test: ' + !!qs('body > div:nth-child(4)') };
+    }
     try {
       bodyEl.focus();
       if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
@@ -157,7 +171,6 @@
     // Send
     const sendBtn =
       xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]') ||
-      xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span') ||
       Array.from(document.querySelectorAll('ui-button')).find(el => {
         try {
           const a = (el.getAttribute('aria-label') || '').toLowerCase();
