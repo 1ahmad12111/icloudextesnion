@@ -8,29 +8,38 @@
 <body>
   <div class="container">
     <h1>Newsletter Sender</h1>
+
     <section class="card">
       <h2>1. Email List</h2>
       <p class="hint">Paste emails (one per line) or upload a CSV/TXT file.</p>
-      <textarea id="emailList" placeholder="alice@example.com&#10;bob@example.com" rows="6"></textarea>
+      <textarea id="emailList" placeholder="alice@example.com&#10;bob@example.com" rows="5"></textarea>
       <div class="row">
-        <label class="file-btn">Load File<input type="file" id="fileInput" accept=".csv,.txt" /></label>
+        <label class="file-btn">Load CSV/TXT<input type="file" id="fileInput" accept=".csv,.txt" /></label>
         <span id="emailCount" class="badge">0 emails</span>
       </div>
     </section>
+
     <section class="card">
       <h2>2. Compose Newsletter</h2>
       <input type="text" id="subject" placeholder="Email subject..." />
-      <textarea id="body" placeholder="Write your newsletter here..." rows="8"></textarea>
+      <div class="row">
+        <label class="file-btn">Upload HTML File<input type="file" id="htmlFileInput" accept=".html,.htm" /></label>
+        <span id="htmlFileName" class="hint">No file loaded</span>
+      </div>
+      <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="7"></textarea>
       <label class="row"><input type="checkbox" id="isHtml" /><span>Send as HTML</span></label>
     </section>
+
     <section class="card">
       <h2>3. Settings</h2>
       <label>Delay between emails (seconds)<input type="number" id="delay" value="5" min="1" max="60" /></label>
     </section>
+
     <div class="controls">
       <button id="startBtn" class="btn-primary">Start Sending</button>
       <button id="stopBtn" class="btn-danger" disabled>Stop</button>
     </div>
+
     <section class="card" id="progressCard" style="display:none">
       <h2>Progress</h2>
       <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>

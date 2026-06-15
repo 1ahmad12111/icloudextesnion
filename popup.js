@@ -1,5 +1,7 @@
 const emailListEl  = document.getElementById('emailList');
 const fileInputEl  = document.getElementById('fileInput');
+const htmlFileInputEl = document.getElementById('htmlFileInput');
+const htmlFileNameEl  = document.getElementById('htmlFileName');
 const emailCountEl = document.getElementById('emailCount');
 const subjectEl    = document.getElementById('subject');
 const bodyEl       = document.getElementById('body');
@@ -12,6 +14,7 @@ const progressBar  = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 const logEl        = document.getElementById('log');
 
+// Restore saved draft
 chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails'], (data) => {
   if (data.subject) subjectEl.value = data.subject;
   if (data.body)    bodyEl.value    = data.body;
@@ -30,10 +33,11 @@ function getEmails() {
 }
 function updateCount() {
   const n = getEmails().length;
-  emailCountEl.textContent = `${n} email${n !== 1 ? 's' : ''}`;
+  emailCountEl.textContent = n + ' email' + (n !== 1 ? 's' : '');
 }
 emailListEl.addEventListener('input', updateCount);
 
+// Load email list from CSV/TXT
 fileInputEl.addEventListener('change', () => {
   const file = fileInputEl.files[0];
   if (!file) return;
@@ -46,9 +50,24 @@ fileInputEl.addEventListener('change', () => {
   reader.readAsText(file);
 });
 
-function addLog(msg, type = 'info') {
+// Load HTML newsletter file
+htmlFileInputEl.addEventListener('change', () => {
+  const file = htmlFileInputEl.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    bodyEl.value = e.target.result;
+    isHtmlEl.checked = true;
+    htmlFileNameEl.textContent = file.name;
+    saveDraft();
+  };
+  reader.readAsText(file);
+});
+
+function addLog(msg, type) {
+  type = type || 'info';
   const el = document.createElement('div');
-  el.className = `log-entry log-${type}`;
+  el.className = 'log-entry log-' + type;
   el.textContent = msg;
   logEl.prepend(el);
 }
@@ -65,7 +84,7 @@ stopBtn.addEventListener('click', () => {
 function setUI(sending) {
   startBtn.disabled = sending;
   stopBtn.disabled  = !sending;
-  progressCard.style.display = sending || logEl.children.length ? 'flex' : 'none';
+  progressCard.style.display = (sending || logEl.children.length) ? 'flex' : 'none';
 }
 
 async function startSending() {
@@ -76,7 +95,7 @@ async function startSending() {
   const delay   = Math.max(1, parseInt(delayEl.value, 10) || 5);
   if (!emails.length) { alert('Please enter at least one email address.'); return; }
   if (!subject)       { alert('Please enter a subject.'); return; }
-  if (!body)          { alert('Please enter a message body.'); return; }
+  if (!body)          { alert('Please enter a message body or upload an HTML file.'); return; }
   isSending = true;
   logEl.innerHTML = '';
   progressCard.style.display = 'flex';
@@ -87,9 +106,9 @@ async function startSending() {
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'progress') {
     progressBar.style.width = Math.round((msg.sent / msg.total) * 100) + '%';
-    progressText.textContent = `${msg.sent} / ${msg.total}`;
+    progressText.textContent = msg.sent + ' / ' + msg.total;
   }
   if (msg.type === 'log')   addLog(msg.text, msg.level || 'info');
-  if (msg.type === 'done')  { isSending = false; setUI(false); addLog(`Done! Sent ${msg.sent} of ${msg.total} emails.`, 'ok'); }
-  if (msg.type === 'error') addLog(`Error: ${msg.text}`, 'err');
+  if (msg.type === 'done')  { isSending = false; setUI(false); addLog('Done! Sent ' + msg.sent + ' of ' + msg.total + ' emails.', 'ok'); }
+  if (msg.type === 'error') addLog('Error: ' + msg.text, 'err');
 });
