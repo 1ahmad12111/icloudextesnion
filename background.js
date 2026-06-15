@@ -18,49 +18,38 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
 
-  // Get or open iCloud Mail tab
   mailTabId = await getOrOpenMailTab();
   broadcast({ type: 'log', text: 'Waiting for iCloud Mail to load...', level: 'info' });
-  await sleep(4000);
+  await sleep(5000);
 
-  // Inject content script if not already there
+  // Re-inject content script into ALL frames
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: mailTabId },
+      target: { tabId: mailTabId, allFrames: true },
       files: ['content.js']
     });
-  } catch(e) {
-    // Already injected, that's fine
-  }
-  await sleep(500);
+  } catch(e) {}
+  await sleep(1000);
 
-  // Check if mail is ready
-  const ready = await pingContentScript();
-  if (!ready) {
-    broadcast({ type: 'log', text: 'iCloud Mail not ready. Make sure you are logged in at icloud.com/mail', level: 'err' });
+  // Ping all frames to find which one has iCloud Mail UI
+  const frameId = await findMailFrame();
+  if (frameId === null) {
+    broadcast({ type: 'log', text: 'Could not find iCloud Mail UI frame. Are you logged in?', level: 'err' });
     return;
   }
 
-  broadcast({ type: 'log', text: 'iCloud Mail ready!', level: 'ok' });
+  broadcast({ type: 'log', text: 'Found mail UI in frame ' + frameId + '!', level: 'ok' });
 
   for (const email of emails) {
     if (stopRequested) break;
-
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      const result = await sendMessage(mailTabId, {
+      const result = await sendToFrame(frameId, {
         action: 'compose',
-        to: email,
-        subject: subject,
-        body: body,
-        isHtml: isHtml
+        to: email, subject, body, isHtml
       });
-
-      if (result && result.error) {
-        throw new Error(result.error);
-      }
-
+      if (result && result.error) throw new Error(result.error);
       sent++;
       broadcast({ type: 'progress', sent, total });
       broadcast({ type: 'log', text: 'Sent to ' + email, level: 'ok' });
@@ -75,6 +64,37 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   }
 
   broadcast({ type: 'done', sent, total });
+}
+
+async function findMailFrame() {
+  // Try pinging each frame; the one with the mail UI will respond with hasMailUI: true
+  const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => null);
+  if (!frames) {
+    // getAllFrames needs webNavigation permission — fall back to frameId 0
+    const result = await sendToFrame(0, { action: 'ping' });
+    return (result && result.ok) ? 0 : null;
+  }
+  for (const frame of frames) {
+    const result = await sendToFrame(frame.frameId, { action: 'ping' });
+    if (result && result.hasMailUI) return frame.frameId;
+  }
+  // Fallback: return any frame that responded
+  for (const frame of frames) {
+    const result = await sendToFrame(frame.frameId, { action: 'ping' });
+    if (result && result.ok) return frame.frameId;
+  }
+  return null;
+}
+
+function sendToFrame(frameId, msg) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve(null), 5000);
+    chrome.tabs.sendMessage(mailTabId, msg, { frameId }, (response) => {
+      clearTimeout(timeout);
+      if (chrome.runtime.lastError) resolve(null);
+      else resolve(response);
+    });
+  });
 }
 
 function broadcast(msg) {
@@ -92,25 +112,6 @@ async function getOrOpenMailTab() {
     return tabs[0].id;
   }
   const tab = await chrome.tabs.create({ url: 'https://www.icloud.com/mail/' });
-  await sleep(5000);
+  await sleep(6000);
   return tab.id;
-}
-
-function sendMessage(tabId, msg) {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve({ error: 'Timeout - no response from page' }), 20000);
-    chrome.tabs.sendMessage(tabId, msg, (response) => {
-      clearTimeout(timeout);
-      if (chrome.runtime.lastError) {
-        resolve({ error: chrome.runtime.lastError.message });
-      } else {
-        resolve(response);
-      }
-    });
-  });
-}
-
-async function pingContentScript() {
-  const result = await sendMessage(mailTabId, { action: 'ping' });
-  return result && result.ok;
 }

@@ -5,171 +5,174 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function click(el) {
-    ['mousedown','mouseup','click'].forEach(function(t) {
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
-    });
+    ['mousedown','mouseup','click'].forEach(t =>
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })));
   }
 
   function fill(el, value) {
-    var desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
     if (desc && desc.set) desc.set.call(el, value);
     el.value = value;
-    ['input','change'].forEach(function(t) {
-      el.dispatchEvent(new Event(t, { bubbles: true }));
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function pressKey(el, key, code) {
+    ['keydown','keypress','keyup'].forEach(t =>
+      el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
+  }
+
+  // Does this frame contain the iCloud Mail UI?
+  function hasMailUI() {
+    const all = Array.from(document.querySelectorAll('*'));
+    return all.some(el => {
+      const cls = (typeof el.className === 'string' ? el.className : el.className.baseVal || '');
+      const tag = el.tagName.toLowerCase();
+      return /mail|compose|inbox/i.test(cls) && ['div','section','nav','ul','main'].includes(tag);
     });
   }
 
-  function pressKey(target, key, keyCode) {
-    ['keydown','keypress','keyup'].forEach(function(t) {
-      target.dispatchEvent(new KeyboardEvent(t, {
-        key: key, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true
-      }));
-    });
-  }
-
-  // Click element at specific screen coordinates
-  function clickAt(x, y) {
-    var el = document.elementFromPoint(x, y);
-    if (el) {
-      click(el);
-      return el;
+  function findAny(selectors) {
+    for (const s of selectors) {
+      try { const el = document.querySelector(s); if (el) return el; } catch(e) {}
     }
     return null;
   }
 
-  // Count compose-related visible inputs/textareas that appear after compose opens
-  function composeWindowOpen() {
-    var inputs = document.querySelectorAll('input[type="text"], input:not([type]), textarea');
-    return inputs.length > 0 && Array.from(inputs).some(function(el) {
-      return el.offsetParent !== null; // visible
-    });
-  }
+  function findComposeBtn() {
+    // Try all known selectors
+    const el = findAny([
+      '[data-type="mail-compose-button"]',
+      '[aria-label="New Message"]',
+      '[aria-label="New message"]',
+      '[aria-label="Compose"]',
+      '[aria-label="compose"]',
+      '[title="New Message"]',
+      '[title="Compose"]',
+      '.compose-button',
+      '[class*="compose-btn"]',
+      '[class*="ComposeButton"]',
+      '[class*="newMessage"]',
+      '[class*="new-message"]'
+    ]);
+    if (el) return el;
 
-  function findInput(hints) {
-    var all = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'));
-    for (var i = 0; i < hints.length; i++) {
-      var re = new RegExp(hints[i], 'i');
-      var found = all.find(function(el) {
-        return el.offsetParent !== null && re.test(
-          (el.getAttribute('placeholder') || '') + ' ' +
-          (el.getAttribute('aria-label') || '') + ' ' +
-          (el.getAttribute('name') || '') + ' ' +
-          (el.className || '')
-        );
-      });
-      if (found) return found;
-    }
-    return null;
-  }
-
-  function findContentEditable() {
-    var all = Array.from(document.querySelectorAll('[contenteditable="true"]'));
-    // Return the largest visible one (likely the body)
-    return all
-      .filter(function(el) { return el.offsetParent !== null && el.offsetHeight > 40; })
-      .sort(function(a, b) { return b.offsetHeight - a.offsetHeight; })[0] || null;
-  }
-
-  function findSendBtn() {
-    var all = Array.from(document.querySelectorAll('*'));
-    return all.find(function(el) {
-      if (!el.offsetParent) return false;
-      var aria  = (el.getAttribute('aria-label') || '').toLowerCase();
-      var title = (el.getAttribute('title') || '').toLowerCase();
-      var text  = (el.textContent || '').trim().toLowerCase();
-      var dt    = (el.getAttribute('data-type') || '').toLowerCase();
-      return aria === 'send' || title === 'send' || dt.includes('send') ||
-             (text === 'send' && ['button','a','div','span'].includes(el.tagName.toLowerCase()));
+    // Search all elements by aria/title/class text
+    return Array.from(document.querySelectorAll('*')).find(el => {
+      const aria  = (el.getAttribute('aria-label') || '').toLowerCase();
+      const title = (el.getAttribute('title') || '').toLowerCase();
+      const cls   = (typeof el.className === 'string' ? el.className :
+                     (el.className && el.className.baseVal) ? el.className.baseVal : '').toLowerCase();
+      const dt    = (el.getAttribute('data-type') || '').toLowerCase();
+      return /compose|new.?message|new.?mail/.test(aria + ' ' + title + ' ' + cls + ' ' + dt);
     }) || null;
   }
 
+  function composeIsOpen() {
+    const inputs = Array.from(document.querySelectorAll('input, textarea'));
+    return inputs.some(el => {
+      const ph = (el.getAttribute('placeholder') || '').toLowerCase();
+      const ar = (el.getAttribute('aria-label') || '').toLowerCase();
+      return /to|recipient|subject/.test(ph + ' ' + ar) && el.offsetParent !== null;
+    });
+  }
+
   async function openCompose() {
-    // Strategy 1: press 'N' (iCloud Mail shortcut for new message)
-    document.body.focus();
+    // Try clicking compose button
+    const btn = findComposeBtn();
+    if (btn) { click(btn); await sleep(2000); if (composeIsOpen()) return true; }
+
+    // Try keyboard shortcut N
     pressKey(document.body, 'n', 78);
     await sleep(1500);
-    if (composeWindowOpen()) return true;
+    if (composeIsOpen()) return true;
 
-    // Strategy 2: click the compose icon area (top-right of iCloud Mail)
-    // The pencil icon is typically near the right edge, about 60-80px from right, top area
-    var w = window.innerWidth;
-    clickAt(w - 60, 235);
-    await sleep(1500);
-    if (composeWindowOpen()) return true;
-
-    // Strategy 3: click slightly different coordinates
-    clickAt(w - 30, 235);
-    await sleep(1500);
-    if (composeWindowOpen()) return true;
-
-    // Strategy 4: find any element at the top-right quadrant and click it
-    for (var x = w - 20; x > w - 200; x -= 15) {
-      var el = document.elementFromPoint(x, 235);
+    // Try clicking top-right area where compose pencil icon lives
+    const w = window.innerWidth;
+    const h = 240;
+    for (let x = w - 15; x > w - 150; x -= 10) {
+      const el = document.elementFromPoint(x, h);
       if (el && el !== document.body && el !== document.documentElement) {
         click(el);
-        await sleep(1000);
-        if (composeWindowOpen()) return true;
+        await sleep(800);
+        if (composeIsOpen()) return true;
       }
     }
-
     return false;
   }
 
   async function compose(to, subject, body, isHtml) {
-    var opened = await openCompose();
+    const opened = await openCompose();
     if (!opened) {
-      return { error: 'Could not open compose window. Try clicking the pencil icon manually first, then retry.' };
+      // Dump what we can see for debugging
+      const els = Array.from(document.querySelectorAll('*'))
+        .filter(el => el.getAttribute('aria-label') || el.getAttribute('title'))
+        .slice(0, 20)
+        .map(el => ({ tag: el.tagName, aria: el.getAttribute('aria-label'), title: el.getAttribute('title') }));
+      return { error: 'Cannot open compose. Elements: ' + JSON.stringify(els) };
     }
-    await sleep(500);
 
-    // To field
-    var toField = findInput(['to', 'recipient', 'address']);
-    if (!toField) return { error: 'To field not found. Compose may not have opened.' };
+    await sleep(300);
+
+    // To
+    const toField = findAny([
+      '[placeholder*="To"]','[aria-label*="To"]','[placeholder*="to"]',
+      'input[name="to"]','[data-field="to"] input','[class*="recipient"] input'
+    ]) || Array.from(document.querySelectorAll('input')).find(el => el.offsetParent !== null);
+    if (!toField) return { error: 'To field not found' };
     toField.focus(); fill(toField, to); await sleep(300);
-    pressKey(toField, 'Enter', 13);
-    await sleep(500);
+    pressKey(toField, 'Enter', 13); await sleep(400);
 
     // Subject
-    var subjectField = findInput(['subject']);
+    const subjectField = findAny([
+      '[placeholder*="Subject"]','[aria-label*="Subject"]',
+      'input[name="subject"]','[data-field="subject"] input'
+    ]);
     if (!subjectField) return { error: 'Subject field not found' };
-    subjectField.focus(); fill(subjectField, subject); await sleep(400);
+    subjectField.focus(); fill(subjectField, subject); await sleep(300);
 
     // Body
-    var bodyIframe = document.querySelector('iframe');
-    if (bodyIframe) {
+    const iframe = document.querySelector('iframe');
+    if (iframe) {
       try {
-        var doc = bodyIframe.contentDocument || bodyIframe.contentWindow.document;
-        var ed = doc.querySelector('[contenteditable="true"]') || doc.body;
+        const doc = iframe.contentDocument || iframe.contentWindow.document;
+        const ed  = doc.querySelector('[contenteditable]') || doc.body;
         ed.focus();
-        if (isHtml) { ed.innerHTML = body; } else { ed.innerText = body; }
+        if (isHtml) ed.innerHTML = body; else ed.innerText = body;
         ed.dispatchEvent(new Event('input', { bubbles: true }));
-      } catch(e) {
-        return { error: 'Body iframe access error: ' + e.message };
-      }
+      } catch(e) { return { error: 'iframe body error: ' + e.message }; }
     } else {
-      var bodyField = findContentEditable();
-      if (!bodyField) return { error: 'Body field not found' };
-      bodyField.focus();
-      if (isHtml) { bodyField.innerHTML = body; } else { bodyField.innerText = body; }
-      bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+      const ed = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+        .filter(el => el.offsetHeight > 40).pop();
+      if (!ed) return { error: 'Body not found' };
+      ed.focus();
+      if (isHtml) ed.innerHTML = body; else ed.innerText = body;
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    await sleep(500);
+    await sleep(400);
 
     // Send
-    var sendBtn = findSendBtn();
+    const sendBtn = Array.from(document.querySelectorAll('*')).find(el => {
+      const a = (el.getAttribute('aria-label') || '').toLowerCase();
+      const t = (el.getAttribute('title') || '').toLowerCase();
+      const tx = (el.textContent || '').trim().toLowerCase();
+      const dt = (el.getAttribute('data-type') || '').toLowerCase();
+      return (a === 'send' || t === 'send' || tx === 'send' || dt.includes('send')) && el.offsetParent;
+    });
     if (!sendBtn) return { error: 'Send button not found' };
-    click(sendBtn);
-    await sleep(1500);
-
+    click(sendBtn); await sleep(1500);
     return { ok: true };
   }
 
-  chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
-    if (msg.action === 'ping') { sendResponse({ ok: true }); return true; }
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg.action === 'ping') {
+      sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href });
+      return true;
+    }
     if (msg.action === 'compose') {
       compose(msg.to, msg.subject, msg.body, msg.isHtml)
-        .then(function(r) { sendResponse(r); })
-        .catch(function(e) { sendResponse({ error: e.message }); });
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
       return true;
     }
   });

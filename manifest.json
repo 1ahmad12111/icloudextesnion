@@ -1,16 +1,17 @@
 {
   "manifest_version": 3,
   "name": "iCloud Newsletter Sender",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Send your newsletter to a list of emails via iCloud Mail, one by one with a delay.",
   "permissions": [
     "storage",
     "tabs",
     "activeTab",
-    "scripting"
+    "scripting",
+    "webNavigation"
   ],
   "host_permissions": [
-    "https://www.icloud.com/*"
+    "https://*.icloud.com/*"
   ],
   "action": {
     "default_popup": "popup.html"
@@ -20,9 +21,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.icloud.com/mail/*"],
+      "matches": ["https://*.icloud.com/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ]
 }
