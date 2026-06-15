@@ -80,50 +80,17 @@
     return null;
   }
 
-  // Recursively search shadow roots for a contenteditable element
-  function findContentEditableInShadow(root, maxDepth) {
-    if (!root || maxDepth <= 0) return null;
-    const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
-    // First look for [contenteditable] directly
-    for (const el of children) {
-      if (el.getAttribute && el.getAttribute('contenteditable') !== null && el.tagName !== 'IFRAME') {
-        try {
-          if (el.offsetHeight > 30) return el;
-        } catch(e) { return el; }
-      }
-    }
-    // Then recurse into shadow roots
-    for (const el of children) {
-      if (el.shadowRoot) {
-        const found = findContentEditableInShadow(el.shadowRoot, maxDepth - 1);
-        if (found) return found;
-      }
-    }
-    return null;
-  }
-
-  function findBody() {
-    // 1. Try shadow DOM of ui-main-pane (iCloud Mail uses web components)
-    const mainPanes = Array.from(document.querySelectorAll('ui-main-pane'));
-    for (const mp of mainPanes) {
-      if (mp.shadowRoot) {
-        const ed = mp.shadowRoot.querySelector('[contenteditable]');
-        if (ed && ed.tagName !== 'IFRAME') return ed;
-        const found = findContentEditableInShadow(mp.shadowRoot, 5);
-        if (found) return found;
-      }
-      // Also check light DOM children
-      const ed = mp.querySelector('[contenteditable]');
-      if (ed && ed.tagName !== 'IFRAME') return ed;
-    }
-
-    // 2. CSS selector provided by user
+  // Try all known selectors for the body field (no contenteditable requirement)
+  function tryFindBody() {
+    // Exact selectors provided by user
     const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
     if (byCSS) return byCSS;
 
-    // 3. XPath variants
+    const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
+    if (byXPath && byXPath.tagName !== 'IFRAME') return byXPath;
+
+    // XPath variants
     const xpaths = [
-      '/html/body/div[2]/ui-main-pane/div/div/div/div/div/div',
       '/html/body/div[4]/ui-main-pane/div/div/div/div/div/div',
       '//ui-main-pane/div/div/div/div/div/div',
       '//ui-main-pane//div[@contenteditable]',
@@ -133,21 +100,23 @@
       if (el && el.tagName !== 'IFRAME') return el;
     }
 
-    // 4. Search all shadow roots on the page
-    const allEls = Array.from(document.querySelectorAll('*'));
-    for (const el of allEls) {
-      if (el.shadowRoot) {
-        const found = findContentEditableInShadow(el.shadowRoot, 5);
-        if (found) return found;
-      }
-    }
-
-    // 5. Largest visible contenteditable (no iframes)
+    // contenteditable anywhere
     const eds = Array.from(document.querySelectorAll('[contenteditable]'))
       .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
       .sort((a, b) => b.offsetHeight - a.offsetHeight);
     if (eds.length) return eds[0];
 
+    return null;
+  }
+
+  // Wait up to maxMs for the body field to appear
+  async function waitForBody(maxMs) {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      const el = tryFindBody();
+      if (el) return el;
+      await sleep(300);
+    }
     return null;
   }
 
@@ -189,15 +158,16 @@
     await typeInto(subjectField, subject);
     await sleep(400);
 
-    // Body - try harder with debug info
-    const bodyEl = findBody();
+    // Body — wait up to 8 seconds for it to render
+    const bodyEl = await waitForBody(8000);
     if (!bodyEl) {
       const mp = qs('ui-main-pane');
       const allCE = document.querySelectorAll('[contenteditable]').length;
-      return { error: 'Body not found. ui-main-pane: ' + !!mp +
-        ', has shadowRoot: ' + !!(mp && mp.shadowRoot) +
-        ', all contenteditable: ' + allCE +
-        ', CSS4 test: ' + !!qs('body > div:nth-child(4)') };
+      const mpChildren = mp ? mp.querySelectorAll('*').length : 0;
+      return { error: 'Body not found after 8s. ui-main-pane children: ' + mpChildren +
+        ', all [contenteditable]: ' + allCE +
+        ', CSS4 exists: ' + !!qs('body > div:nth-child(4)') +
+        ', mainPane innerHTML len: ' + (mp ? mp.innerHTML.length : 0) };
     }
     try {
       bodyEl.focus();
