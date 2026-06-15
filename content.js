@@ -22,157 +22,154 @@
       el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
   }
 
-  // Does this frame contain the iCloud Mail UI?
+  function xpathFind(xpath) {
+    try {
+      var result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      return result.singleNodeValue || null;
+    } catch(e) { return null; }
+  }
+
   function hasMailUI() {
-    const all = Array.from(document.querySelectorAll('*'));
-    return all.some(el => {
-      const cls = (typeof el.className === 'string' ? el.className : el.className.baseVal || '');
-      const tag = el.tagName.toLowerCase();
-      return /mail|compose|inbox/i.test(cls) && ['div','section','nav','ul','main'].includes(tag);
+    return !!(document.querySelector('#app-body') ||
+              document.querySelector('ui-split-container') ||
+              document.querySelector('ui-button'));
+  }
+
+  function findComposeBtn() {
+    // Use the exact XPath the user provided
+    var byXpath = xpathFind('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
+    if (byXpath) return byXpath;
+
+    // Also try the svg/span inside it
+    var bySvg = xpathFind('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button/span/svg');
+    if (bySvg) return bySvg;
+
+    // Fallback: find ui-button elements and pick the compose one
+    var uiButtons = Array.from(document.querySelectorAll('ui-button'));
+    // The compose button is in div[3] - it's typically the 3rd button in the top toolbar
+    // Try to find it by aria or title on the ui-button or its children
+    var found = uiButtons.find(function(btn) {
+      var aria  = (btn.getAttribute('aria-label') || '').toLowerCase();
+      var title = (btn.getAttribute('title') || '').toLowerCase();
+      var inner = (btn.textContent || '').toLowerCase();
+      return /compose|new.?message|new.?mail/.test(aria + title + inner);
+    });
+    if (found) return found;
+
+    // Last resort: 3rd ui-button in the toolbar area
+    var inAppBody = document.querySelector('#app-body');
+    if (inAppBody) {
+      var buttons = Array.from(inAppBody.querySelectorAll('ui-button'));
+      if (buttons.length >= 3) return buttons[2]; // 0-indexed, div[3] = index 2
+    }
+
+    return null;
+  }
+
+  function composeIsOpen() {
+    // Check for inputs that belong to a compose window
+    var inputs = Array.from(document.querySelectorAll('input, ui-autocomplete-field, [contenteditable]'));
+    return inputs.some(function(el) {
+      var ph = (el.getAttribute('placeholder') || '').toLowerCase();
+      var ar = (el.getAttribute('aria-label') || '').toLowerCase();
+      return /^to$|^subject$|recipient/.test(ph + ' ' + ar) && el.offsetParent !== null;
     });
   }
 
-  function findAny(selectors) {
-    for (const s of selectors) {
-      try { const el = document.querySelector(s); if (el) return el; } catch(e) {}
+  function findField(hints) {
+    // Search inputs, ui-* elements, and contenteditable
+    var candidates = Array.from(document.querySelectorAll('input, textarea, [contenteditable], ui-autocomplete-field, ui-text-field'));
+    for (var h of hints) {
+      var re = new RegExp(h, 'i');
+      var found = candidates.find(function(el) {
+        if (!el.offsetParent) return false;
+        var ph = el.getAttribute('placeholder') || '';
+        var ar = el.getAttribute('aria-label') || '';
+        var nm = el.getAttribute('name') || '';
+        var dt = el.getAttribute('data-field') || '';
+        return re.test(ph + ' ' + ar + ' ' + nm + ' ' + dt);
+      });
+      if (found) return found;
     }
     return null;
   }
 
-  function findComposeBtn() {
-    // Try all known selectors
-    const el = findAny([
-      '[data-type="mail-compose-button"]',
-      '[aria-label="New Message"]',
-      '[aria-label="New message"]',
-      '[aria-label="Compose"]',
-      '[aria-label="compose"]',
-      '[title="New Message"]',
-      '[title="Compose"]',
-      '.compose-button',
-      '[class*="compose-btn"]',
-      '[class*="ComposeButton"]',
-      '[class*="newMessage"]',
-      '[class*="new-message"]'
-    ]);
-    if (el) return el;
-
-    // Search all elements by aria/title/class text
-    return Array.from(document.querySelectorAll('*')).find(el => {
-      const aria  = (el.getAttribute('aria-label') || '').toLowerCase();
-      const title = (el.getAttribute('title') || '').toLowerCase();
-      const cls   = (typeof el.className === 'string' ? el.className :
-                     (el.className && el.className.baseVal) ? el.className.baseVal : '').toLowerCase();
-      const dt    = (el.getAttribute('data-type') || '').toLowerCase();
-      return /compose|new.?message|new.?mail/.test(aria + ' ' + title + ' ' + cls + ' ' + dt);
-    }) || null;
-  }
-
-  function composeIsOpen() {
-    const inputs = Array.from(document.querySelectorAll('input, textarea'));
-    return inputs.some(el => {
-      const ph = (el.getAttribute('placeholder') || '').toLowerCase();
-      const ar = (el.getAttribute('aria-label') || '').toLowerCase();
-      return /to|recipient|subject/.test(ph + ' ' + ar) && el.offsetParent !== null;
-    });
-  }
-
-  async function openCompose() {
-    // Try clicking compose button
-    const btn = findComposeBtn();
-    if (btn) { click(btn); await sleep(2000); if (composeIsOpen()) return true; }
-
-    // Try keyboard shortcut N
-    pressKey(document.body, 'n', 78);
-    await sleep(1500);
-    if (composeIsOpen()) return true;
-
-    // Try clicking top-right area where compose pencil icon lives
-    const w = window.innerWidth;
-    const h = 240;
-    for (let x = w - 15; x > w - 150; x -= 10) {
-      const el = document.elementFromPoint(x, h);
-      if (el && el !== document.body && el !== document.documentElement) {
-        click(el);
-        await sleep(800);
-        if (composeIsOpen()) return true;
-      }
-    }
-    return false;
-  }
-
   async function compose(to, subject, body, isHtml) {
-    const opened = await openCompose();
-    if (!opened) {
-      // Dump what we can see for debugging
-      const els = Array.from(document.querySelectorAll('*'))
-        .filter(el => el.getAttribute('aria-label') || el.getAttribute('title'))
-        .slice(0, 20)
-        .map(el => ({ tag: el.tagName, aria: el.getAttribute('aria-label'), title: el.getAttribute('title') }));
-      return { error: 'Cannot open compose. Elements: ' + JSON.stringify(els) };
+    // Open compose
+    var composeBtn = findComposeBtn();
+    if (!composeBtn) {
+      var uiButtons = Array.from(document.querySelectorAll('ui-button')).map(function(b) {
+        return { aria: b.getAttribute('aria-label'), title: b.getAttribute('title'), text: b.textContent.trim().slice(0,30) };
+      });
+      return { error: 'Compose button not found. ui-buttons: ' + JSON.stringify(uiButtons) };
     }
 
-    await sleep(300);
+    click(composeBtn);
+    await sleep(2500);
 
-    // To
-    const toField = findAny([
-      '[placeholder*="To"]','[aria-label*="To"]','[placeholder*="to"]',
-      'input[name="to"]','[data-field="to"] input','[class*="recipient"] input'
-    ]) || Array.from(document.querySelectorAll('input')).find(el => el.offsetParent !== null);
+    if (!composeIsOpen()) {
+      // Try clicking the parent element
+      if (composeBtn.parentElement) click(composeBtn.parentElement);
+      await sleep(1500);
+    }
+
+    // To field
+    var toField = findField(['to', 'recipient']) ||
+      Array.from(document.querySelectorAll('input')).filter(function(el) { return el.offsetParent; })[0];
     if (!toField) return { error: 'To field not found' };
     toField.focus(); fill(toField, to); await sleep(300);
-    pressKey(toField, 'Enter', 13); await sleep(400);
+    pressKey(toField, 'Enter', 13); await sleep(500);
 
     // Subject
-    const subjectField = findAny([
-      '[placeholder*="Subject"]','[aria-label*="Subject"]',
-      'input[name="subject"]','[data-field="subject"] input'
-    ]);
+    var subjectField = findField(['subject']);
     if (!subjectField) return { error: 'Subject field not found' };
-    subjectField.focus(); fill(subjectField, subject); await sleep(300);
+    subjectField.focus(); fill(subjectField, subject); await sleep(400);
 
-    // Body
-    const iframe = document.querySelector('iframe');
+    // Body - check iframe first, then contenteditable
+    var iframe = document.querySelector('iframe');
     if (iframe) {
       try {
-        const doc = iframe.contentDocument || iframe.contentWindow.document;
-        const ed  = doc.querySelector('[contenteditable]') || doc.body;
+        var doc = iframe.contentDocument || iframe.contentWindow.document;
+        var ed  = doc.querySelector('[contenteditable]') || doc.body;
         ed.focus();
         if (isHtml) ed.innerHTML = body; else ed.innerText = body;
         ed.dispatchEvent(new Event('input', { bubbles: true }));
-      } catch(e) { return { error: 'iframe body error: ' + e.message }; }
+      } catch(e) { return { error: 'iframe error: ' + e.message }; }
     } else {
-      const ed = Array.from(document.querySelectorAll('[contenteditable="true"]'))
-        .filter(el => el.offsetHeight > 40).pop();
-      if (!ed) return { error: 'Body not found' };
+      var editables = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+        .filter(function(el) { return el.offsetHeight > 40 && el.offsetParent; });
+      var ed = editables[editables.length - 1];
+      if (!ed) return { error: 'Body field not found' };
       ed.focus();
       if (isHtml) ed.innerHTML = body; else ed.innerText = body;
       ed.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    await sleep(400);
+    await sleep(500);
 
-    // Send
-    const sendBtn = Array.from(document.querySelectorAll('*')).find(el => {
-      const a = (el.getAttribute('aria-label') || '').toLowerCase();
-      const t = (el.getAttribute('title') || '').toLowerCase();
-      const tx = (el.textContent || '').trim().toLowerCase();
-      const dt = (el.getAttribute('data-type') || '').toLowerCase();
-      return (a === 'send' || t === 'send' || tx === 'send' || dt.includes('send')) && el.offsetParent;
-    });
+    // Send button - check ui-button elements too
+    var sendBtn = xpathFind('//*[contains(@aria-label,"Send") or contains(@title,"Send") or @data-type="mail-send-button"]') ||
+      Array.from(document.querySelectorAll('ui-button, button, [role="button"]')).find(function(el) {
+        var a = (el.getAttribute('aria-label') || '').toLowerCase();
+        var t = (el.getAttribute('title') || '').toLowerCase();
+        var tx = (el.textContent || '').trim().toLowerCase();
+        var dt = (el.getAttribute('data-type') || '').toLowerCase();
+        return (a === 'send' || t === 'send' || tx === 'send' || dt.includes('send')) && el.offsetParent;
+      });
     if (!sendBtn) return { error: 'Send button not found' };
     click(sendBtn); await sleep(1500);
+
     return { ok: true };
   }
 
-  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
     if (msg.action === 'ping') {
       sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href });
       return true;
     }
     if (msg.action === 'compose') {
       compose(msg.to, msg.subject, msg.body, msg.isHtml)
-        .then(r => sendResponse(r))
-        .catch(e => sendResponse({ error: e.message }));
+        .then(function(r) { sendResponse(r); })
+        .catch(function(e) { sendResponse({ error: e.message }); });
       return true;
     }
   });
