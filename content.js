@@ -41,12 +41,8 @@
   }
 
   function shadowInput(el) {
-    if (!el) return null;
-    if (el.shadowRoot) {
-      const inp = el.shadowRoot.querySelector('input, [contenteditable]');
-      if (inp) return inp;
-    }
-    return null;
+    if (!el || !el.shadowRoot) return null;
+    return el.shadowRoot.querySelector('input, [contenteditable]') || null;
   }
 
   function getAutoCompleteInputs() {
@@ -63,11 +59,10 @@
       if (id) {
         const inp = document.querySelector('[aria-labelledby="' + id + '"]');
         if (inp) return inp;
-        const customEls = Array.from(document.querySelectorAll('ui-autocomplete-field, ui-text-field, [class*="field"]'));
-        for (const cel of customEls) {
+        for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
           if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
           if (cel.shadowRoot) {
-            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input, [contenteditable]');
+            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
             if (si) return si;
           }
         }
@@ -82,66 +77,27 @@
   }
 
   function findBody() {
-    // Try the exact XPath variants
-    const xpaths = [
-      '/html/body/div[2]/ui-main-pane/div/div/div/div/div/div',
-      '/html/body/div[2]/ui-main-pane/div/div/div/div/div',
-      '/html/body/div[2]/ui-main-pane/div/div/div/div',
-      '//ui-main-pane//div[@contenteditable]',
-      '//ui-main-pane//*[@contenteditable="true"]',
-    ];
-    for (const xp of xpaths) {
-      const el = xpath(xp);
-      if (el) return el;
-    }
+    // Exact XPath provided by user (with correct extra /div)
+    const byXpath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div/div');
+    if (byXpath) return byXpath;
 
-    // Try ui-main-pane selector
+    // Try parent in case structure shifts
+    const byXpathShort = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
+    if (byXpathShort && byXpathShort.tagName !== 'IFRAME') return byXpathShort;
+
+    // contenteditable inside ui-main-pane
     const mainPane = document.querySelector('ui-main-pane');
     if (mainPane) {
-      // Check shadow root
-      if (mainPane.shadowRoot) {
-        const ed = mainPane.shadowRoot.querySelector('[contenteditable], iframe, textarea');
-        if (ed) return ed;
-      }
-      const ed = mainPane.querySelector('[contenteditable], iframe, textarea');
+      const ed = mainPane.querySelector('[contenteditable]');
       if (ed) return ed;
     }
 
-    // Try any iframe in the compose area
-    const iframes = Array.from(document.querySelectorAll('iframe'));
-    if (iframes.length > 0) return iframes[0];
-
-    // Fallback: largest visible contenteditable
+    // Largest visible contenteditable (skip iframes)
     const eds = Array.from(document.querySelectorAll('[contenteditable]'))
       .filter(el => { try { return el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
       .sort((a, b) => b.offsetHeight - a.offsetHeight);
     if (eds.length) return eds[0];
 
-    return null;
-  }
-
-  async function fillBody(bodyEl, body, isHtml) {
-    if (bodyEl.tagName === 'IFRAME') {
-      try {
-        const doc = bodyEl.contentDocument || bodyEl.contentWindow.document;
-        const ed = doc.querySelector('[contenteditable]') || doc.body;
-        ed.focus();
-        if (isHtml) { ed.innerHTML = body; } else { ed.innerText = body; }
-        ed.dispatchEvent(new Event('input', { bubbles: true }));
-        return null;
-      } catch(e) { return 'iframe body error: ' + e.message; }
-    }
-    try {
-      bodyEl.focus();
-      if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
-      bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
-      // Fallback: execCommand
-      if (!bodyEl.textContent && !bodyEl.innerHTML) {
-        bodyEl.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, isHtml ? body : body);
-      }
-    } catch(e) { return 'body fill error: ' + e.message; }
     return null;
   }
 
@@ -187,14 +143,15 @@
 
     // Body
     const bodyEl = findBody();
-    if (!bodyEl) {
-      // Debug: report what's in ui-main-pane
-      const mp = document.querySelector('ui-main-pane');
-      return { error: 'Body not found. ui-main-pane exists: ' + !!mp +
-        ', innerHTML snippet: ' + (mp ? mp.innerHTML.slice(0, 200) : 'N/A') };
+    if (!bodyEl) return { error: 'Body field not found' };
+
+    try {
+      bodyEl.focus();
+      if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
+      bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch(e) {
+      return { error: 'Body fill error: ' + e.message };
     }
-    const bodyErr = await fillBody(bodyEl, body, isHtml);
-    if (bodyErr) return { error: bodyErr };
     await sleep(500);
 
     // Send
