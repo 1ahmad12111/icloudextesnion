@@ -5,21 +5,22 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function click(el) {
-    ['mousedown','mouseup','click'].forEach(t =>
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })));
+    try { ['mousedown','mouseup','click'].forEach(t =>
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))); } catch(e) {}
   }
 
+  // Simple fill — no native setter, just direct assignment + events
   function fill(el, value) {
-    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-    if (desc && desc.set) desc.set.call(el, value);
-    el.value = value;
-    el.dispatchEvent(new Event('input',  { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    try { el.value = value; } catch(e) {}
+    try { el.dispatchEvent(new Event('input',  { bubbles: true })); } catch(e) {}
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
   }
 
   function pressKey(el, key, code) {
-    ['keydown','keypress','keyup'].forEach(t =>
-      el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
+    try {
+      ['keydown','keypress','keyup'].forEach(t =>
+        el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
+    } catch(e) {}
   }
 
   function xpath(expr) {
@@ -38,76 +39,77 @@
   function findComposeBtn() {
     return xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button') ||
            xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button/span/svg') ||
-           Array.from(document.querySelectorAll('#app-body ui-button')).find(b => {
-             const a = (b.getAttribute('aria-label') || '').toLowerCase();
-             const t = (b.getAttribute('title') || '').toLowerCase();
-             return /compose|new.?message/.test(a + t);
-           }) ||
-           (document.querySelectorAll('#app-body ui-button')[2] || null);
+           Array.from(document.querySelectorAll('#app-body ui-button'))[2] ||
+           null;
   }
 
-  // Get all visible inputs sorted by vertical position (top to bottom)
+  // Get visible inputs sorted by offsetTop (no getBoundingClientRect)
   function getVisibleInputs() {
-    return Array.from(document.querySelectorAll('input, ui-autocomplete-field input, [role="textbox"]'))
-      .filter(el => el.offsetParent !== null)
-      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    return Array.from(document.querySelectorAll('input'))
+      .filter(el => {
+        try { return el.offsetParent !== null; } catch(e) { return false; }
+      })
+      .sort((a, b) => {
+        try { return a.offsetTop - b.offsetTop; } catch(e) { return 0; }
+      });
   }
 
   async function compose(to, subject, body, isHtml) {
-    // 1. Click compose
+    // 1. Compose button
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found' };
     click(composeBtn);
     await sleep(2500);
 
-    // 2. To field — first visible input after compose opens
+    // 2. To field — first visible input
     const inputs = getVisibleInputs();
-    if (inputs.length === 0) return { error: 'No inputs found in compose window' };
-
+    if (!inputs.length) return { error: 'No inputs found after compose opened' };
     const toField = inputs[0];
-    toField.focus();
+    try { toField.focus(); } catch(e) {}
     fill(toField, to);
     await sleep(400);
-    // Confirm the recipient by pressing Enter or Tab
     pressKey(toField, 'Enter', 13);
-    await sleep(500);
+    await sleep(600);
 
-    // 3. Subject — second visible input
-    // Re-query because DOM may update after confirming To
+    // 3. Subject — second visible input (re-query after To confirmed)
     const inputs2 = getVisibleInputs();
     const subjectField = inputs2[1] || inputs2[0];
     if (!subjectField) return { error: 'Subject field not found' };
-    subjectField.focus();
+    try { subjectField.focus(); } catch(e) {}
     fill(subjectField, subject);
     await sleep(400);
 
-    // 4. Body — use the XPath provided
+    // 4. Body — XPath provided by user
     const bodyEl = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
     if (bodyEl) {
-      bodyEl.focus();
-      if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
-      bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
+      try { bodyEl.focus(); } catch(e) {}
+      try {
+        if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
+        bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
+      } catch(e) { return { error: 'Body fill error: ' + e.message }; }
     } else {
       // Fallback: largest contenteditable
-      const ed = Array.from(document.querySelectorAll('[contenteditable="true"]'))
-        .filter(el => el.offsetHeight > 40 && el.offsetParent)
-        .sort((a, b) => b.offsetHeight - a.offsetHeight)[0];
-      if (!ed) return { error: 'Body field not found' };
-      ed.focus();
+      const eds = Array.from(document.querySelectorAll('[contenteditable="true"]'))
+        .filter(el => { try { return el.offsetHeight > 40 && el.offsetParent; } catch(e) { return false; } })
+        .sort((a, b) => b.offsetHeight - a.offsetHeight);
+      if (!eds.length) return { error: 'Body field not found' };
+      const ed = eds[0];
+      try { ed.focus(); } catch(e) {}
       if (isHtml) { ed.innerHTML = body; } else { ed.innerText = body; }
       ed.dispatchEvent(new Event('input', { bubbles: true }));
     }
     await sleep(500);
 
-    // 5. Send button — use the XPath provided
+    // 5. Send button — XPath provided by user
     const sendBtn =
       xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span') ||
       xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]') ||
-      Array.from(document.querySelectorAll('ui-button, button')).find(el => {
-        const a  = (el.getAttribute('aria-label') || '').toLowerCase();
-        const t  = (el.getAttribute('title') || '').toLowerCase();
-        const tx = (el.textContent || '').trim().toLowerCase();
-        return (a === 'send' || t === 'send' || tx === 'send') && el.offsetParent;
+      Array.from(document.querySelectorAll('ui-button')).find(el => {
+        try {
+          const a = (el.getAttribute('aria-label') || '').toLowerCase();
+          const t = (el.getAttribute('title') || '').toLowerCase();
+          return a === 'send' || t === 'send';
+        } catch(e) { return false; }
       });
     if (!sendBtn) return { error: 'Send button not found' };
     click(sendBtn);
