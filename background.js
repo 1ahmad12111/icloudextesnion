@@ -18,14 +18,30 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
 
+  // Get or open iCloud Mail tab
+  mailTabId = await getOrOpenMailTab();
+  broadcast({ type: 'log', text: 'Waiting for iCloud Mail to load...', level: 'info' });
+  await sleep(4000);
+
+  // Inject content script if not already there
   try {
-    mailTabId = await getOrOpenMailTab();
-    await sleep(3000); // wait for iCloud Mail to load
-    await waitForMailReady();
-  } catch (e) {
-    broadcast({ type: 'log', text: 'Error opening iCloud Mail: ' + e.message, level: 'err' });
+    await chrome.scripting.executeScript({
+      target: { tabId: mailTabId },
+      files: ['content.js']
+    });
+  } catch(e) {
+    // Already injected, that's fine
+  }
+  await sleep(500);
+
+  // Check if mail is ready
+  const ready = await pingContentScript();
+  if (!ready) {
+    broadcast({ type: 'log', text: 'iCloud Mail not ready. Make sure you are logged in at icloud.com/mail', level: 'err' });
     return;
   }
+
+  broadcast({ type: 'log', text: 'iCloud Mail ready!', level: 'ok' });
 
   for (const email of emails) {
     if (stopRequested) break;
@@ -33,7 +49,18 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      await injectAndSend(email, subject, body, isHtml);
+      const result = await sendMessage(mailTabId, {
+        action: 'compose',
+        to: email,
+        subject: subject,
+        body: body,
+        isHtml: isHtml
+      });
+
+      if (result && result.error) {
+        throw new Error(result.error);
+      }
+
       sent++;
       broadcast({ type: 'progress', sent, total });
       broadcast({ type: 'log', text: 'Sent to ' + email, level: 'ok' });
@@ -65,124 +92,25 @@ async function getOrOpenMailTab() {
     return tabs[0].id;
   }
   const tab = await chrome.tabs.create({ url: 'https://www.icloud.com/mail/' });
+  await sleep(5000);
   return tab.id;
 }
 
-async function waitForMailReady() {
-  for (let i = 0; i < 30; i++) {
-    try {
-      const [r] = await chrome.scripting.executeScript({
-        target: { tabId: mailTabId },
-        func: () => {
-          return !!(
-            document.querySelector('[data-type="mail-compose-button"]') ||
-            document.querySelector('.compose-button') ||
-            Array.from(document.querySelectorAll('[aria-label]')).find(el => el.getAttribute('aria-label').includes('ompose'))
-          );
-        }
-      });
-      if (r && r.result) return;
-    } catch (_) {}
-    await sleep(1000);
-  }
-  throw new Error('iCloud Mail did not load. Make sure you are logged in.');
-}
-
-async function injectAndSend(to, subject, body, isHtml) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: mailTabId },
-    func: doCompose,
-    args: [to, subject, body, isHtml]
+function sendMessage(tabId, msg) {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve({ error: 'Timeout - no response from page' }), 20000);
+    chrome.tabs.sendMessage(tabId, msg, (response) => {
+      clearTimeout(timeout);
+      if (chrome.runtime.lastError) {
+        resolve({ error: chrome.runtime.lastError.message });
+      } else {
+        resolve(response);
+      }
+    });
   });
-  const result = results && results[0] && results[0].result;
-  if (result && result.error) throw new Error(result.error);
 }
 
-async function doCompose(to, subject, body, isHtml) {
-  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-  function click(el) {
-    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    el.click();
-  }
-
-  function fill(el, value) {
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-    if (setter && setter.set) setter.set.call(el, value);
-    el.value = value;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-  }
-
-  try {
-    // Click compose
-    const composeBtn =
-      document.querySelector('[data-type="mail-compose-button"]') ||
-      document.querySelector('.compose-button') ||
-      Array.from(document.querySelectorAll('button,[role="button"],[aria-label]'))
-        .find(el => /compose|new.?mail|new.?message/i.test(el.textContent + (el.getAttribute('aria-label') || '')));
-
-    if (!composeBtn) return { error: 'Compose button not found' };
-    click(composeBtn);
-    await sleep(2000);
-
-    // To field
-    const toField =
-      document.querySelector('input[data-field="to"]') ||
-      document.querySelector('.mail-compose-recipients input') ||
-      document.querySelector('[placeholder*="To"]') ||
-      document.querySelector('[aria-label*="To"]');
-    if (!toField) return { error: 'To field not found' };
-    toField.focus();
-    fill(toField, to);
-    await sleep(300);
-    toField.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-    await sleep(400);
-
-    // Subject field
-    const subjectField =
-      document.querySelector('input[data-field="subject"]') ||
-      document.querySelector('[placeholder*="Subject"]') ||
-      document.querySelector('[aria-label*="Subject"]');
-    if (!subjectField) return { error: 'Subject field not found' };
-    subjectField.focus();
-    fill(subjectField, subject);
-    await sleep(300);
-
-    // Body
-    const bodyFrame = document.querySelector('.mail-composer-body iframe, [data-field="body"] iframe');
-    if (bodyFrame) {
-      const doc = bodyFrame.contentDocument || bodyFrame.contentWindow.document;
-      const editable = doc.querySelector('[contenteditable="true"]') || doc.body;
-      editable.focus();
-      if (isHtml) { editable.innerHTML = body; } else { editable.innerText = body; }
-      editable.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-      const bodyField =
-        document.querySelector('[contenteditable="true"].mail-composer-body') ||
-        document.querySelector('.mail-composer [contenteditable="true"]') ||
-        Array.from(document.querySelectorAll('[contenteditable="true"]')).pop();
-      if (!bodyField) return { error: 'Body field not found' };
-      bodyField.focus();
-      if (isHtml) { bodyField.innerHTML = body; } else { bodyField.innerText = body; }
-      bodyField.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    await sleep(500);
-
-    // Send button
-    const sendBtn =
-      document.querySelector('[data-type="mail-send-button"]') ||
-      document.querySelector('button[title*="Send"]') ||
-      Array.from(document.querySelectorAll('button,[role="button"]'))
-        .find(el => /^send$/i.test((el.textContent || el.getAttribute('aria-label') || '').trim()));
-    if (!sendBtn) return { error: 'Send button not found' };
-    click(sendBtn);
-    await sleep(1500);
-
-    return { ok: true };
-  } catch (e) {
-    return { error: e.message };
-  }
+async function pingContentScript() {
+  const result = await sendMessage(mailTabId, { action: 'ping' });
+  return result && result.ok;
 }
