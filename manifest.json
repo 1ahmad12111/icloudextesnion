@@ -1,19 +1,21 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 3,
   "name": "iCloud Newsletter Sender",
   "version": "1.0.0",
   "description": "Send your newsletter to a list of emails via iCloud Mail, one by one with a delay.",
   "permissions": [
     "storage",
     "tabs",
-    "activeTab",
+    "activeTab"
+  ],
+  "host_permissions": [
     "https://www.icloud.com/*"
   ],
-  "browser_action": {
+  "action": {
     "default_popup": "popup.html"
   },
   "background": {
-    "scripts": ["background.js"]
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
