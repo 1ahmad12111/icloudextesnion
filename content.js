@@ -80,16 +80,13 @@
     return null;
   }
 
-  // Try all known selectors for the body field (no contenteditable requirement)
   function tryFindBody() {
-    // Exact selectors provided by user
     const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
     if (byCSS) return byCSS;
 
     const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
     if (byXPath && byXPath.tagName !== 'IFRAME') return byXPath;
 
-    // XPath variants
     const xpaths = [
       '/html/body/div[4]/ui-main-pane/div/div/div/div/div/div',
       '//ui-main-pane/div/div/div/div/div/div',
@@ -100,7 +97,6 @@
       if (el && el.tagName !== 'IFRAME') return el;
     }
 
-    // contenteditable anywhere
     const eds = Array.from(document.querySelectorAll('[contenteditable]'))
       .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
       .sort((a, b) => b.offsetHeight - a.offsetHeight);
@@ -109,7 +105,6 @@
     return null;
   }
 
-  // Wait up to maxMs for the body field to appear
   async function waitForBody(maxMs) {
     const deadline = Date.now() + maxMs;
     while (Date.now() < deadline) {
@@ -127,6 +122,36 @@
   function findComposeBtn() {
     return xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button') ||
            Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
+  }
+
+  function findSendBtn() {
+    // Try the exact XPath with span (as user identified)
+    const bySpan = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span');
+    if (bySpan) return bySpan;
+
+    // Try the ui-button itself
+    const byBtn = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]');
+    if (byBtn) return byBtn;
+
+    // Try shadow root button inside each ui-button
+    const uiButtons = Array.from(document.querySelectorAll('ui-button'));
+    for (const ub of uiButtons) {
+      const a = (ub.getAttribute('aria-label') || '').toLowerCase();
+      const t = (ub.getAttribute('title') || '').toLowerCase();
+      if (a === 'send' || t === 'send') {
+        // Try inner span or shadow button
+        const inner = ub.querySelector('span') || (ub.shadowRoot && ub.shadowRoot.querySelector('button, span'));
+        return inner || ub;
+      }
+    }
+
+    // Last resort: any ui-button whose text or label says Send
+    return uiButtons.find(el => {
+      try {
+        const text = (el.textContent || '').trim().toLowerCase();
+        return text === 'send';
+      } catch(e) { return false; }
+    }) || null;
   }
 
   async function compose(to, subject, body, isHtml) {
@@ -158,39 +183,33 @@
     await typeInto(subjectField, subject);
     await sleep(400);
 
-    // Body — wait up to 8 seconds for it to render
+    // Body
     const bodyEl = await waitForBody(8000);
     if (!bodyEl) {
       const mp = qs('ui-main-pane');
-      const allCE = document.querySelectorAll('[contenteditable]').length;
-      const mpChildren = mp ? mp.querySelectorAll('*').length : 0;
-      return { error: 'Body not found after 8s. ui-main-pane children: ' + mpChildren +
-        ', all [contenteditable]: ' + allCE +
-        ', CSS4 exists: ' + !!qs('body > div:nth-child(4)') +
-        ', mainPane innerHTML len: ' + (mp ? mp.innerHTML.length : 0) };
+      return { error: 'Body not found after 8s. ui-main-pane children: ' +
+        (mp ? mp.querySelectorAll('*').length : 0) +
+        ', CSS4 exists: ' + !!qs('body > div:nth-child(4)') };
     }
     try {
       bodyEl.focus();
       if (isHtml) { bodyEl.innerHTML = body; } else { bodyEl.innerText = body; }
       bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
+      bodyEl.dispatchEvent(new Event('change', { bubbles: true }));
     } catch(e) {
       return { error: 'Body fill error: ' + e.message };
     }
-    await sleep(500);
+    await sleep(800);
 
     // Send
-    const sendBtn =
-      xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]') ||
-      Array.from(document.querySelectorAll('ui-button')).find(el => {
-        try {
-          const a = (el.getAttribute('aria-label') || '').toLowerCase();
-          const t = (el.getAttribute('title') || '').toLowerCase();
-          return a === 'send' || t === 'send';
-        } catch(e) { return false; }
-      });
-    if (!sendBtn) return { error: 'Send button not found' };
+    const sendBtn = findSendBtn();
+    if (!sendBtn) {
+      const allUiButtons = Array.from(document.querySelectorAll('ui-button')).map(b =>
+        (b.getAttribute('aria-label') || b.getAttribute('title') || b.textContent || '').trim().substring(0, 30));
+      return { error: 'Send button not found. ui-buttons: ' + JSON.stringify(allUiButtons) };
+    }
     click(sendBtn);
-    await sleep(1500);
+    await sleep(2000);
     return { ok: true };
   }
 
