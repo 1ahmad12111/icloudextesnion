@@ -80,12 +80,48 @@
     return null;
   }
 
+  // Recursively search shadow roots for a contenteditable element
+  function findContentEditableInShadow(root, maxDepth) {
+    if (!root || maxDepth <= 0) return null;
+    const children = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+    // First look for [contenteditable] directly
+    for (const el of children) {
+      if (el.getAttribute && el.getAttribute('contenteditable') !== null && el.tagName !== 'IFRAME') {
+        try {
+          if (el.offsetHeight > 30) return el;
+        } catch(e) { return el; }
+      }
+    }
+    // Then recurse into shadow roots
+    for (const el of children) {
+      if (el.shadowRoot) {
+        const found = findContentEditableInShadow(el.shadowRoot, maxDepth - 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
   function findBody() {
-    // CSS selector provided by user (most reliable)
+    // 1. Try shadow DOM of ui-main-pane (iCloud Mail uses web components)
+    const mainPanes = Array.from(document.querySelectorAll('ui-main-pane'));
+    for (const mp of mainPanes) {
+      if (mp.shadowRoot) {
+        const ed = mp.shadowRoot.querySelector('[contenteditable]');
+        if (ed && ed.tagName !== 'IFRAME') return ed;
+        const found = findContentEditableInShadow(mp.shadowRoot, 5);
+        if (found) return found;
+      }
+      // Also check light DOM children
+      const ed = mp.querySelector('[contenteditable]');
+      if (ed && ed.tagName !== 'IFRAME') return ed;
+    }
+
+    // 2. CSS selector provided by user
     const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
     if (byCSS) return byCSS;
 
-    // XPath variants
+    // 3. XPath variants
     const xpaths = [
       '/html/body/div[2]/ui-main-pane/div/div/div/div/div/div',
       '/html/body/div[4]/ui-main-pane/div/div/div/div/div/div',
@@ -97,14 +133,16 @@
       if (el && el.tagName !== 'IFRAME') return el;
     }
 
-    // contenteditable inside ui-main-pane
-    const mainPane = qs('ui-main-pane');
-    if (mainPane) {
-      const ed = mainPane.querySelector('[contenteditable]');
-      if (ed) return ed;
+    // 4. Search all shadow roots on the page
+    const allEls = Array.from(document.querySelectorAll('*'));
+    for (const el of allEls) {
+      if (el.shadowRoot) {
+        const found = findContentEditableInShadow(el.shadowRoot, 5);
+        if (found) return found;
+      }
     }
 
-    // Largest visible contenteditable (no iframes)
+    // 5. Largest visible contenteditable (no iframes)
     const eds = Array.from(document.querySelectorAll('[contenteditable]'))
       .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
       .sort((a, b) => b.offsetHeight - a.offsetHeight);
@@ -151,13 +189,15 @@
     await typeInto(subjectField, subject);
     await sleep(400);
 
-    // Body
+    // Body - try harder with debug info
     const bodyEl = findBody();
     if (!bodyEl) {
       const mp = qs('ui-main-pane');
+      const allCE = document.querySelectorAll('[contenteditable]').length;
       return { error: 'Body not found. ui-main-pane: ' + !!mp +
-        '. Children: ' + (mp ? mp.children.length : 0) +
-        '. CSS test: ' + !!qs('body > div:nth-child(4)') };
+        ', has shadowRoot: ' + !!(mp && mp.shadowRoot) +
+        ', all contenteditable: ' + allCE +
+        ', CSS4 test: ' + !!qs('body > div:nth-child(4)') };
     }
     try {
       bodyEl.focus();
