@@ -136,38 +136,14 @@
 
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    let subjectField = null;
-
-    // Try 0: activeElement — after Tab key the Subject input should be focused
-    const ae = document.activeElement;
-    if (ae && ae.tagName === 'INPUT') subjectField = ae;
-    if (!subjectField && ae && ae.shadowRoot) {
-      const si = ae.shadowRoot.activeElement || ae.shadowRoot.querySelector('input');
-      if (si && si.tagName === 'INPUT') subjectField = si;
-    }
-
-    // Try 1: second ui-autocomplete-field shadow input
+    // Second ui-autocomplete-field input = Subject (language-agnostic)
     const ac = getAutoCompleteInputs();
-    if (ac[1]) subjectField = ac[1];
-
-    // Try 2: ui-text-field shadow root (Subject is sometimes rendered as ui-text-field)
+    let subjectField = ac[1] || null;
     if (!subjectField) {
-      for (const tf of document.querySelectorAll('ui-text-field')) {
-        const si = tf.shadowRoot && tf.shadowRoot.querySelector('input');
-        if (si) { subjectField = si; break; }
-      }
+      const visibleInputs = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+      subjectField = visibleInputs[1] || visibleInputs[0] || null;
     }
-
-    // Try 3: any visible input with nonzero width
-    if (!subjectField) {
-      subjectField = Array.from(document.querySelectorAll('input')).find(i => {
-        try {
-          const s = window.getComputedStyle(i);
-          return s.display !== 'none' && s.visibility !== 'hidden' && i.offsetWidth > 0;
-        } catch(e) { return false; }
-      }) || null;
-    }
-
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);

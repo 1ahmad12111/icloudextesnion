@@ -36,14 +36,6 @@ async function sendDebuggerEnter(tabId) {
   await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 }
 
-async function sendDebuggerTab(tabId) {
-  const base = { modifiers: 0, key: 'Tab', code: 'Tab', keyCode: 9,
-    nativeVirtualKeyCode: 9, autoRepeat: false, isKeypad: false, isSystemKey: false };
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
-  await sleep(60);
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
-}
-
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 async function runSendLoop({ emails, subject, body, isHtml, delay }) {
@@ -91,19 +83,15 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       broadcast({ type: 'log', text: 'Compose open, To typed.', level: 'info' });
 
       // Step 2: Fire trusted Enter via debugger to confirm the email token.
+      // Fire quickly (50ms) while the To input still has focus, then retry after 400ms.
       await sleep(50);
       await sendDebuggerEnter(mailTabId);
       await sleep(400);
-      await sendDebuggerEnter(mailTabId); // retry in case focus shifted
+      await sendDebuggerEnter(mailTabId); // second attempt in case focus shifted
       broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
 
-      // Step 3: Tab to Subject field (moves focus from To to Subject reliably)
-      await sleep(500);
-      await sendDebuggerTab(mailTabId);
-      broadcast({ type: 'log', text: 'Tab sent — focus should be on Subject.', level: 'info' });
-
-      // Step 4: Type subject into whatever is focused (the Subject input)
-      await sleep(300);
+      // Step 3: Fill Subject
+      await sleep(600);
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
