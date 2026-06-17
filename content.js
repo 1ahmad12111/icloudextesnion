@@ -79,83 +79,6 @@
     } catch(e) {}
   }
 
-  // Search for the body editor in the main doc AND inside any accessible iframes
-  async function waitForBody(maxMs) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      // 1. isContentEditable in main doc (no iframe)
-      const byEditable = Array.from(document.querySelectorAll('div, p, section'))
-        .filter(el => { try { return el.isContentEditable && el.tagName !== 'IFRAME' && el.offsetHeight > 50; } catch(e) { return false; } })
-        .sort((a, b) => b.offsetHeight - a.offsetHeight)[0];
-      if (byEditable) return { el: byEditable, doc: document };
-
-      // 2. Search inside iframes
-      const iframes = Array.from(document.querySelectorAll('iframe'));
-      for (const iframe of iframes) {
-        try {
-          const iDoc = iframe.contentDocument || iframe.contentWindow.document;
-          if (!iDoc) continue;
-          // editable body or contenteditable
-          const ce = iDoc.querySelector('[contenteditable="true"], [contenteditable=""]');
-          if (ce && ce.offsetHeight > 20) return { el: ce, doc: iDoc };
-          if (iDoc.body && iDoc.body.isContentEditable) return { el: iDoc.body, doc: iDoc };
-          if (iDoc.designMode === 'on') return { el: iDoc.body, doc: iDoc };
-        } catch(e) { /* cross-origin, skip */ }
-      }
-
-      // 3. User-provided XPath (wrapper div fallback)
-      const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
-      if (byXPath && byXPath.tagName !== 'IFRAME') return { el: byXPath, doc: document };
-
-      // 4. User-provided CSS
-      const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
-      if (byCSS) return { el: byCSS, doc: document };
-
-      await sleep(300);
-    }
-    return null;
-  }
-
-  async function fillBody(result, text, isHtml) {
-    const { el, doc } = result;
-    click(el);
-    await sleep(150);
-    try { el.focus(); } catch(e) {}
-    await sleep(150);
-
-    if (isHtml) {
-      try { el.innerHTML = text; } catch(e) {}
-      try { doc.execCommand('selectAll', false, null); doc.execCommand('insertHTML', false, text); } catch(e) {}
-    } else {
-      // Try execCommand on the element's document (works for iframe docs too)
-      let ok = false;
-      try {
-        el.focus();
-        doc.execCommand('selectAll', false, null);
-        ok = doc.execCommand('insertText', false, text);
-      } catch(e) {}
-
-      if (!ok) {
-        // ClipboardEvent paste
-        try {
-          const dt = new DataTransfer();
-          dt.setData('text/plain', text);
-          el.focus();
-          el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-          ok = true;
-        } catch(e) {}
-      }
-
-      if (!ok) {
-        // Direct set
-        try { el.innerText = text; ok = true; } catch(e) {}
-      }
-    }
-
-    try { el.dispatchEvent(new InputEvent('input',  { bubbles: true, inputType: 'insertText', data: text })); } catch(e) {}
-    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
-  }
-
   function hasMailUI() {
     return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
   }
@@ -175,38 +98,88 @@
     return null;
   }
 
-  async function trySend() {
-    // 1. Keyboard shortcut Cmd+Enter (most reliable in mail apps)
-    const target = document.activeElement || document.body;
-    try {
-      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
-    } catch(e) {}
-    await sleep(300);
-    try {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
-    } catch(e) {}
-    await sleep(500);
+  // DIAGNOSTIC: collect everything about the compose body area
+  function diagnoseBody() {
+    const lines = [];
 
-    // 2. Old XPath with span
-    const bySpan = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span');
-    if (bySpan) { click(bySpan); return; }
-    const byOld = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]');
-    if (byOld) { click(byOld); return; }
-
-    // 3. ui-button with send label
-    const all = Array.from(document.querySelectorAll('ui-button'));
-    const byLabel = all.find(b => /^send$/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
-    if (byLabel) { click(byLabel.querySelector('span') || byLabel); return; }
-
-    // 4. Last ui-button in pane (the send icon button)
-    const pane = qs('#root ui-pane') || qs('ui-pane');
-    if (pane) {
-      const btns = Array.from(pane.querySelectorAll('ui-button'));
-      if (btns.length > 0) { click(btns[btns.length - 1].querySelector('span') || btns[btns.length - 1]); return; }
+    // 1. ui-main-pane
+    const mp = qs('ui-main-pane');
+    lines.push('ui-main-pane: ' + !!mp);
+    if (mp) {
+      lines.push('mp.shadowRoot: ' + !!mp.shadowRoot);
+      lines.push('mp.children count: ' + mp.children.length);
+      // first 3 child tag names
+      const childTags = Array.from(mp.children).slice(0, 5).map(c => c.tagName).join(',');
+      lines.push('mp child tags: ' + childTags);
+      // look for iframes inside mp
+      const mpIframes = mp.querySelectorAll('iframe');
+      lines.push('mp iframes: ' + mpIframes.length);
+      if (mpIframes.length > 0) {
+        for (let i = 0; i < mpIframes.length; i++) {
+          const fr = mpIframes[i];
+          lines.push('iframe[' + i + '] src: ' + (fr.src || 'none').substring(0, 60));
+          try {
+            const fd = fr.contentDocument;
+            lines.push('iframe[' + i + '] accessible: ' + !!fd);
+            if (fd) {
+              lines.push('iframe[' + i + '] body.isContentEditable: ' + fd.body.isContentEditable);
+              lines.push('iframe[' + i + '] designMode: ' + fd.designMode);
+              const fce = fd.querySelectorAll('[contenteditable]').length;
+              lines.push('iframe[' + i + '] [contenteditable] count: ' + fce);
+            }
+          } catch(e) {
+            lines.push('iframe[' + i + '] blocked: ' + e.message.substring(0, 50));
+          }
+        }
+      }
     }
 
-    // 5. Return error info
-    return 'no-send-btn';
+    // 2. All iframes on page
+    const allIframes = document.querySelectorAll('iframe');
+    lines.push('total iframes on page: ' + allIframes.length);
+    for (let i = 0; i < Math.min(allIframes.length, 5); i++) {
+      const fr = allIframes[i];
+      lines.push('page-iframe[' + i + '] src: ' + (fr.src || 'none').substring(0, 60));
+      try {
+        const fd = fr.contentDocument;
+        lines.push('page-iframe[' + i + '] accessible: ' + !!fd + ', designMode: ' + (fd ? fd.designMode : 'n/a'));
+      } catch(e) {
+        lines.push('page-iframe[' + i + '] blocked');
+      }
+    }
+
+    // 3. [contenteditable] on page
+    lines.push('[contenteditable] count: ' + document.querySelectorAll('[contenteditable]').length);
+
+    // 4. isContentEditable elements
+    const isEdCount = Array.from(document.querySelectorAll('*'))
+      .filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length;
+    lines.push('isContentEditable count: ' + isEdCount);
+
+    // 5. CSS selector test
+    const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
+    lines.push('CSS selector found: ' + !!byCSS);
+    if (byCSS) {
+      lines.push('CSS el tag: ' + byCSS.tagName);
+      lines.push('CSS el isContentEditable: ' + byCSS.isContentEditable);
+      lines.push('CSS el children: ' + byCSS.children.length);
+      const childTags2 = Array.from(byCSS.children).slice(0,5).map(c => c.tagName).join(',');
+      lines.push('CSS el child tags: ' + childTags2);
+      const innerIframes = byCSS.querySelectorAll('iframe').length;
+      lines.push('CSS el iframes inside: ' + innerIframes);
+    }
+
+    // 6. XPath test
+    const byXP = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
+    lines.push('XPath found: ' + !!byXP + (byXP ? ' tag:' + byXP.tagName : ''));
+
+    // 7. ui-button labels (for send)
+    const btnLabels = Array.from(document.querySelectorAll('ui-button'))
+      .map(b => (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().substring(0, 20))
+      .filter(Boolean);
+    lines.push('ui-button labels: ' + JSON.stringify(btnLabels));
+
+    return lines.join(' | ');
   }
 
   async function compose(to, subject, body, isHtml) {
@@ -216,7 +189,7 @@
 
     const card = await waitForComposeCard(5000);
     if (!card) return { error: 'Compose dialog did not open' };
-    await sleep(600);
+    await sleep(1500); // wait for body to fully render
 
     // To
     let toField = findFieldByLabelText('To');
@@ -242,23 +215,9 @@
     pressKey(subjectField, 'Tab', 9);
     await sleep(500);
 
-    // Body
-    const bodyResult = await waitForBody(8000);
-    if (!bodyResult) {
-      const iframeCount = document.querySelectorAll('iframe').length;
-      const isEditCount = Array.from(document.querySelectorAll('*')).filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length;
-      return { error: 'Body not found. iframes: ' + iframeCount + ', isContentEditable: ' + isEditCount };
-    }
-    await fillBody(bodyResult, body, isHtml);
-    await sleep(800);
-
-    // Send
-    const sendResult = await trySend();
-    await sleep(2000);
-    if (sendResult === 'no-send-btn') {
-      return { error: 'Send button not found and keyboard shortcut may have failed' };
-    }
-    return { ok: true };
+    // Run diagnostics and return them as an error so the user can see
+    const diagnosis = diagnoseBody();
+    return { error: 'DIAG: ' + diagnosis };
   }
 
   chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
