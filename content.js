@@ -136,14 +136,30 @@
 
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    // Second ui-autocomplete-field input = Subject (language-agnostic)
+    let subjectField = null;
+
+    // Try 1: second ui-autocomplete-field shadow input
     const ac = getAutoCompleteInputs();
-    let subjectField = ac[1] || null;
+    if (ac[1]) subjectField = ac[1];
+
+    // Try 2: ui-text-field shadow root (Subject is sometimes rendered as ui-text-field)
     if (!subjectField) {
-      const visibleInputs = Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
-      subjectField = visibleInputs[1] || visibleInputs[0] || null;
+      for (const tf of document.querySelectorAll('ui-text-field')) {
+        const si = tf.shadowRoot && tf.shadowRoot.querySelector('input');
+        if (si) { subjectField = si; break; }
+      }
     }
+
+    // Try 3: any visible input with nonzero width
+    if (!subjectField) {
+      subjectField = Array.from(document.querySelectorAll('input')).find(i => {
+        try {
+          const s = window.getComputedStyle(i);
+          return s.display !== 'none' && s.visibility !== 'hidden' && i.offsetWidth > 0;
+        } catch(e) { return false; }
+      }) || null;
+    }
+
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
