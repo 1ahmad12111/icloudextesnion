@@ -88,6 +88,24 @@
     } catch(e) {}
   }
 
+  // Confirm the email token in a ui-autocomplete-field by pressing Enter then Tab
+  // on BOTH the inner shadow input and the outer element
+  async function confirmToken(inputEl) {
+    const parent = inputEl.closest('ui-autocomplete-field') || inputEl.parentElement;
+    // Enter on inner input
+    pressKey(inputEl, 'Enter', 13);
+    await sleep(150);
+    // Enter on parent too
+    if (parent && parent !== inputEl) pressKey(parent, 'Enter', 13);
+    await sleep(150);
+    // Tab on inner input
+    pressKey(inputEl, 'Tab', 9);
+    await sleep(150);
+    // Tab on parent too
+    if (parent && parent !== inputEl) pressKey(parent, 'Tab', 9);
+    await sleep(500);
+  }
+
   function hasMailUI() {
     return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
   }
@@ -127,7 +145,7 @@
     return lines.join(' | ');
   }
 
-  // ── Action: composeOpen ─────────────────────────────────────────────────────
+  // ── Action: composeOpen ──────────────────────────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -143,14 +161,13 @@
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
+    // Click parent to focus
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
     await typeInto(toField, to);
     await sleep(400);
-    pressKey(toField, 'Enter', 13);
-    await sleep(300);
-    pressKey(toField, 'Tab', 9);
-    await sleep(600);
+    // Confirm the token with Enter+Tab on both inner input and parent
+    await confirmToken(toField);
 
     // Subject field
     let subjectField = findFieldByLabelText('Subject');
@@ -162,20 +179,18 @@
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
-    // Tab out of subject to ensure it's committed and body is ready
     pressKey(subjectField, 'Tab', 9);
     await sleep(800);
 
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs in mail2-rte iframe) ──────────────────────────
+  // ── Action: fillBody (runs in mail2-rte iframe) ─────────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
                document.body;
 
-    // Click the editor to focus it
     try { click(ed); } catch(e) {}
     await sleep(300);
     try { ed.focus(); } catch(e) {}
@@ -211,7 +226,7 @@
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend ──────────────────────────────────────────────────────
+  // ── Action: clickSend ────────────────────────────────────────────────────
   async function clickSend() {
     await sleep(600);
 
@@ -224,13 +239,13 @@
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
 
-    // Use elementFromPoint to pierce shadow DOM and get the real clickable element
+    // elementFromPoint pierces shadow DOM — gets the real inner clickable element
     try {
       const rect = sendBtn.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;
       const realTarget = document.elementFromPoint(x, y);
-      if (realTarget && realTarget !== sendBtn) {
+      if (realTarget) {
         realTarget.click();
         realTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
         await sleep(200);
