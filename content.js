@@ -4,17 +4,15 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-  // Click with full pointer event sequence at element center coordinates
   function click(el) {
     try {
       const rect = el.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;
       const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
-      el.dispatchEvent(new PointerEvent('pointerover',  Object.assign({ isPrimary: true }, opts)));
-      el.dispatchEvent(new PointerEvent('pointerdown',  Object.assign({ isPrimary: true }, opts)));
+      el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ isPrimary: true }, opts)));
       el.dispatchEvent(new MouseEvent('mousedown', opts));
-      el.dispatchEvent(new PointerEvent('pointerup',    Object.assign({ isPrimary: true }, opts)));
+      el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ isPrimary: true }, opts)));
       el.dispatchEvent(new MouseEvent('mouseup', opts));
       el.dispatchEvent(new MouseEvent('click', opts));
     } catch(e) {}
@@ -76,7 +74,6 @@
     return null;
   }
 
-  // Simple fill — restore the approach that was working before
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
@@ -146,15 +143,14 @@
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
-    // Click the parent ui-autocomplete-field to ensure it's focused
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
     await typeInto(toField, to);
     await sleep(400);
     pressKey(toField, 'Enter', 13);
-    await sleep(200);
+    await sleep(300);
     pressKey(toField, 'Tab', 9);
-    await sleep(500);
+    await sleep(600);
 
     // Subject field
     let subjectField = findFieldByLabelText('Subject');
@@ -166,18 +162,22 @@
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
+    // Tab out of subject to ensure it's committed and body is ready
     pressKey(subjectField, 'Tab', 9);
-    await sleep(300);
+    await sleep(800);
 
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs in mail2-rte iframe) ───────────────────────────
+  // ── Action: fillBody (runs in mail2-rte iframe) ──────────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
                document.body;
 
+    // Click the editor to focus it
+    try { click(ed); } catch(e) {}
+    await sleep(300);
     try { ed.focus(); } catch(e) {}
     await sleep(200);
 
@@ -208,18 +208,10 @@
     try { ed.blur(); } catch(e) {}
     await sleep(300);
 
-    // Try sending Cmd+Enter from inside the RTE iframe (may bubble to parent)
-    try {
-      document.dispatchEvent(new KeyboardEvent('keydown', {
-        key: 'Enter', keyCode: 13, metaKey: true, ctrlKey: true,
-        bubbles: true, cancelable: true
-      }));
-    } catch(e) {}
-
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend ────────────────────────────────────────────────────────
+  // ── Action: clickSend ──────────────────────────────────────────────────────
   async function clickSend() {
     await sleep(600);
 
@@ -232,18 +224,24 @@
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
 
-    // Full pointer event sequence at real coordinates
+    // Use elementFromPoint to pierce shadow DOM and get the real clickable element
+    try {
+      const rect = sendBtn.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const realTarget = document.elementFromPoint(x, y);
+      if (realTarget && realTarget !== sendBtn) {
+        realTarget.click();
+        realTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+        await sleep(200);
+      }
+    } catch(e) {}
+
+    // Also click the ui-button itself
     click(sendBtn);
     await sleep(300);
 
-    // Also try shadow root inner element
-    if (sendBtn.shadowRoot) {
-      const inner = sendBtn.shadowRoot.querySelector('button, [role="button"], span');
-      if (inner) { click(inner); }
-    }
-    await sleep(300);
-
-    // Keyboard shortcut in this frame too
+    // Keyboard shortcut fallback
     try {
       document.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Enter', keyCode: 13, metaKey: true, ctrlKey: true,
