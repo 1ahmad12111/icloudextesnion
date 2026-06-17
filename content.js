@@ -40,32 +40,6 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  function findFieldByLabelText(labelText) {
-    const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
-    const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
-      .filter(el => re.test((el.textContent || '').trim()));
-    for (const label of labels) {
-      const id = label.id;
-      if (id) {
-        const inp = document.querySelector('[aria-labelledby="' + id + '"]');
-        if (inp) return inp;
-        for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
-          if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
-          if (cel.shadowRoot) {
-            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
-            if (si) return si;
-          }
-        }
-      }
-      const parent = label.closest('[class*="field"], [class*="row"], li, div') || label.parentElement;
-      if (parent) {
-        const si = parent.querySelector('input, [contenteditable], ui-autocomplete-field');
-        if (si && si !== label) return si;
-      }
-    }
-    return null;
-  }
-
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
@@ -89,16 +63,6 @@
     return !!(qs('#app-body') || findComposeBtn());
   }
 
-  async function waitForComposeCard(maxMs) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      const card = qs('#root ui-card') || qs('ui-card') || qs('#root ui-pane');
-      if (card && card.querySelector('input, ui-autocomplete-field')) return card;
-      await sleep(200);
-    }
-    return null;
-  }
-
   function diagnose() {
     const lines = [];
     lines.push('url: ' + window.location.href.substring(0, 80));
@@ -120,15 +84,16 @@
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
     click(composeBtn);
 
-    const card = await waitForComposeCard(5000);
-    if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
-    await sleep(800);
+    // Poll for ui-autocomplete-field inputs (language-agnostic, works in any locale)
+    let toField = null;
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const inputs = getAutoCompleteInputs();
+      if (inputs.length > 0) { toField = inputs[0]; break; }
+      await sleep(200);
+    }
 
-    let toField = findFieldByLabelText('To');
-    if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
-    if (!toField) toField = Array.from(document.querySelectorAll('input'))
-      .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
-    if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
+    if (!toField) return { error: 'To field never appeared after compose. DIAG: ' + diagnose() };
 
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
@@ -136,7 +101,7 @@
     await typeInto(toField, to);
     await sleep(300);
 
-    // Aggressively re-focus the input so the upcoming trusted Enter key lands here
+    // Re-focus so the upcoming trusted Enter key lands on this input
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(50);
     try { toField.focus(); } catch(e) {}
@@ -147,11 +112,13 @@
 
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    let subjectField = findFieldByLabelText('Subject');
-    if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
+    // Second ui-autocomplete-field input = Subject (language-agnostic)
+    const ac = getAutoCompleteInputs();
+    let subjectField = ac[1] || null;
     if (!subjectField) {
-      subjectField = Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
+      const visibleInputs = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+      subjectField = visibleInputs[1] || visibleInputs[0] || null;
     }
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
@@ -200,8 +167,12 @@
   async function clickSend() {
     await sleep(600);
 
+    // Match send button in any language
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
-      .find(b => b.getAttribute('aria-label') === 'Send Message');
+      .find(b => {
+        const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+        return lbl.includes('send') || lbl.includes('送信') || lbl.includes('envoyer') || lbl.includes('senden') || lbl.includes('enviar');
+      });
 
     if (!sendBtn) {
       const labels = Array.from(document.querySelectorAll('ui-button'))
