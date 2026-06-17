@@ -138,6 +138,14 @@
   async function fillSubject(subject) {
     let subjectField = null;
 
+    // Try 0: activeElement — after Tab key the Subject input should be focused
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'INPUT') subjectField = ae;
+    if (!subjectField && ae && ae.shadowRoot) {
+      const si = ae.shadowRoot.activeElement || ae.shadowRoot.querySelector('input');
+      if (si && si.tagName === 'INPUT') subjectField = si;
+    }
+
     // Try 1: second ui-autocomplete-field shadow input
     const ac = getAutoCompleteInputs();
     if (ac[1]) subjectField = ac[1];
