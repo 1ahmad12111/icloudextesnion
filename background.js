@@ -22,7 +22,7 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   broadcast({ type: 'log', text: 'Waiting for iCloud Mail to load...', level: 'info' });
   await sleep(5000);
 
-  // Re-inject content script into ALL frames
+  // Re-inject content script into ALL frames (including icloud-sandbox.com frames)
   try {
     await chrome.scripting.executeScript({
       target: { tabId: mailTabId, allFrames: true },
@@ -31,25 +31,46 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   } catch(e) {}
   await sleep(1000);
 
-  // Ping all frames to find which one has iCloud Mail UI
-  const frameId = await findMailFrame();
-  if (frameId === null) {
+  // Find the mail UI frame (handles compose/To/Subject/send)
+  const mailFrameId = await findMailFrame();
+  if (mailFrameId === null) {
     broadcast({ type: 'log', text: 'Could not find iCloud Mail UI frame. Are you logged in?', level: 'err' });
+    broadcast({ type: 'done', sent: 0, total });
     return;
   }
-
-  broadcast({ type: 'log', text: 'Found mail UI in frame ' + frameId + '!', level: 'ok' });
+  broadcast({ type: 'log', text: 'Found mail UI in frame ' + mailFrameId + '!', level: 'ok' });
 
   for (const email of emails) {
     if (stopRequested) break;
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      const result = await sendToFrame(frameId, {
-        action: 'compose',
-        to: email, subject, body, isHtml
+      // Step 1: Open compose and fill To + Subject
+      const composeResult = await sendToFrame(mailFrameId, {
+        action: 'composeOpen',
+        to: email,
+        subject
       });
-      if (result && result.error) throw new Error(result.error);
+      if (composeResult && composeResult.error) throw new Error(composeResult.error);
+
+      // Step 2: Find the RTE iframe (body editor) — it loads after compose opens
+      const rteFrameId = await findRteFrame(3000);
+      if (rteFrameId === null) throw new Error('Body editor iframe not found');
+
+      // Step 3: Fill the body in the RTE iframe
+      const bodyResult = await sendToFrame(rteFrameId, {
+        action: 'fillBody',
+        body,
+        isHtml
+      });
+      if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
+
+      await sleep(500);
+
+      // Step 4: Click Send in the mail frame
+      const sendResult = await sendToFrame(mailFrameId, { action: 'clickSend' });
+      if (sendResult && sendResult.error) throw new Error(sendResult.error);
+
       sent++;
       broadcast({ type: 'progress', sent, total });
       broadcast({ type: 'log', text: 'Sent to ' + email, level: 'ok' });
@@ -57,7 +78,7 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       broadcast({ type: 'log', text: 'Failed for ' + email + ': ' + err.message, level: 'err' });
     }
 
-    if (sent < total && !stopRequested) {
+    if (!stopRequested) {
       broadcast({ type: 'log', text: 'Waiting ' + delay + 's...', level: 'info' });
       await sleep(delay * 1000);
     }
@@ -67,10 +88,8 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
 }
 
 async function findMailFrame() {
-  // Try pinging each frame; the one with the mail UI will respond with hasMailUI: true
   const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => null);
   if (!frames) {
-    // getAllFrames needs webNavigation permission — fall back to frameId 0
     const result = await sendToFrame(0, { action: 'ping' });
     return (result && result.ok) ? 0 : null;
   }
@@ -78,10 +97,21 @@ async function findMailFrame() {
     const result = await sendToFrame(frame.frameId, { action: 'ping' });
     if (result && result.hasMailUI) return frame.frameId;
   }
-  // Fallback: return any frame that responded
-  for (const frame of frames) {
-    const result = await sendToFrame(frame.frameId, { action: 'ping' });
-    if (result && result.ok) return frame.frameId;
+  return null;
+}
+
+async function findRteFrame(maxMs) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => []);
+    for (const frame of frames) {
+      if (frame.url && frame.url.includes('mail2-rte')) {
+        // Ping it to confirm content script is running
+        const result = await sendToFrame(frame.frameId, { action: 'ping' });
+        if (result && result.ok) return frame.frameId;
+      }
+    }
+    await sleep(300);
   }
   return null;
 }

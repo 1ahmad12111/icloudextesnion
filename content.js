@@ -23,8 +23,8 @@
     } catch(e) { return null; }
   }
 
-  function qs(sel, ctx) {
-    try { return (ctx || document).querySelector(sel); } catch(e) { return null; }
+  function qs(sel) {
+    try { return document.querySelector(sel); } catch(e) { return null; }
   }
 
   function shadowInput(el) {
@@ -98,100 +98,17 @@
     return null;
   }
 
-  // DIAGNOSTIC: collect everything about the compose body area
-  function diagnoseBody() {
-    const lines = [];
-
-    // 1. ui-main-pane
-    const mp = qs('ui-main-pane');
-    lines.push('ui-main-pane: ' + !!mp);
-    if (mp) {
-      lines.push('mp.shadowRoot: ' + !!mp.shadowRoot);
-      lines.push('mp.children count: ' + mp.children.length);
-      // first 3 child tag names
-      const childTags = Array.from(mp.children).slice(0, 5).map(c => c.tagName).join(',');
-      lines.push('mp child tags: ' + childTags);
-      // look for iframes inside mp
-      const mpIframes = mp.querySelectorAll('iframe');
-      lines.push('mp iframes: ' + mpIframes.length);
-      if (mpIframes.length > 0) {
-        for (let i = 0; i < mpIframes.length; i++) {
-          const fr = mpIframes[i];
-          lines.push('iframe[' + i + '] src: ' + (fr.src || 'none').substring(0, 60));
-          try {
-            const fd = fr.contentDocument;
-            lines.push('iframe[' + i + '] accessible: ' + !!fd);
-            if (fd) {
-              lines.push('iframe[' + i + '] body.isContentEditable: ' + fd.body.isContentEditable);
-              lines.push('iframe[' + i + '] designMode: ' + fd.designMode);
-              const fce = fd.querySelectorAll('[contenteditable]').length;
-              lines.push('iframe[' + i + '] [contenteditable] count: ' + fce);
-            }
-          } catch(e) {
-            lines.push('iframe[' + i + '] blocked: ' + e.message.substring(0, 50));
-          }
-        }
-      }
-    }
-
-    // 2. All iframes on page
-    const allIframes = document.querySelectorAll('iframe');
-    lines.push('total iframes on page: ' + allIframes.length);
-    for (let i = 0; i < Math.min(allIframes.length, 5); i++) {
-      const fr = allIframes[i];
-      lines.push('page-iframe[' + i + '] src: ' + (fr.src || 'none').substring(0, 60));
-      try {
-        const fd = fr.contentDocument;
-        lines.push('page-iframe[' + i + '] accessible: ' + !!fd + ', designMode: ' + (fd ? fd.designMode : 'n/a'));
-      } catch(e) {
-        lines.push('page-iframe[' + i + '] blocked');
-      }
-    }
-
-    // 3. [contenteditable] on page
-    lines.push('[contenteditable] count: ' + document.querySelectorAll('[contenteditable]').length);
-
-    // 4. isContentEditable elements
-    const isEdCount = Array.from(document.querySelectorAll('*'))
-      .filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length;
-    lines.push('isContentEditable count: ' + isEdCount);
-
-    // 5. CSS selector test
-    const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
-    lines.push('CSS selector found: ' + !!byCSS);
-    if (byCSS) {
-      lines.push('CSS el tag: ' + byCSS.tagName);
-      lines.push('CSS el isContentEditable: ' + byCSS.isContentEditable);
-      lines.push('CSS el children: ' + byCSS.children.length);
-      const childTags2 = Array.from(byCSS.children).slice(0,5).map(c => c.tagName).join(',');
-      lines.push('CSS el child tags: ' + childTags2);
-      const innerIframes = byCSS.querySelectorAll('iframe').length;
-      lines.push('CSS el iframes inside: ' + innerIframes);
-    }
-
-    // 6. XPath test
-    const byXP = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
-    lines.push('XPath found: ' + !!byXP + (byXP ? ' tag:' + byXP.tagName : ''));
-
-    // 7. ui-button labels (for send)
-    const btnLabels = Array.from(document.querySelectorAll('ui-button'))
-      .map(b => (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().substring(0, 20))
-      .filter(Boolean);
-    lines.push('ui-button labels: ' + JSON.stringify(btnLabels));
-
-    return lines.join(' | ');
-  }
-
-  async function compose(to, subject, body, isHtml) {
+  // ── Action: composeOpen (runs in mail UI frame) ───────────────────────────────
+  async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found' };
     click(composeBtn);
 
     const card = await waitForComposeCard(5000);
     if (!card) return { error: 'Compose dialog did not open' };
-    await sleep(1500); // wait for body to fully render
+    await sleep(800);
 
-    // To
+    // To field
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
@@ -202,7 +119,7 @@
     pressKey(toField, 'Tab', 9);
     await sleep(500);
 
-    // Subject
+    // Subject field
     let subjectField = findFieldByLabelText('Subject');
     if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
     if (!subjectField) {
@@ -213,11 +130,63 @@
     await typeInto(subjectField, subject);
     await sleep(300);
     pressKey(subjectField, 'Tab', 9);
-    await sleep(500);
+    await sleep(300);
 
-    // Run diagnostics and return them as an error so the user can see
-    const diagnosis = diagnoseBody();
-    return { error: 'DIAG: ' + diagnosis };
+    return { ok: true };
+  }
+
+  // ── Action: fillBody (runs inside the mail2-rte iframe) ──────────────────────
+  async function fillBody(body, isHtml) {
+    // The RTE iframe's document.body IS the editor
+    const ed = document.querySelector('[contenteditable]') ||
+               (document.body.isContentEditable ? document.body : null) ||
+               document.body;
+
+    try { ed.focus(); } catch(e) {}
+    await sleep(200);
+
+    if (isHtml) {
+      try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertHTML', false, body);
+      } catch(e) {
+        try { ed.innerHTML = body; } catch(e2) {}
+      }
+    } else {
+      // execCommand on the iframe's own document
+      try {
+        document.execCommand('selectAll', false, null);
+        const ok = document.execCommand('insertText', false, body);
+        if (!ok) throw new Error('insertText returned false');
+      } catch(e) {
+        // clipboard paste fallback
+        try {
+          const dt = new DataTransfer();
+          dt.setData('text/plain', body);
+          ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        } catch(e2) {
+          try { ed.innerText = body; } catch(e3) {}
+        }
+      }
+    }
+
+    try { ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); } catch(e) {}
+    await sleep(200);
+    return { ok: true };
+  }
+
+  // ── Action: clickSend (runs in mail UI frame) ─────────────────────────────────
+  function clickSend() {
+    // aria-label is "Send Message" (confirmed from diagnostics)
+    const sendBtn = Array.from(document.querySelectorAll('ui-button'))
+      .find(b => b.getAttribute('aria-label') === 'Send Message');
+    if (!sendBtn) {
+      const labels = Array.from(document.querySelectorAll('ui-button'))
+        .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
+      return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) };
+    }
+    click(sendBtn);
+    return { ok: true };
   }
 
   chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
@@ -225,10 +194,20 @@
       sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href });
       return true;
     }
-    if (msg.action === 'compose') {
-      compose(msg.to, msg.subject, msg.body, msg.isHtml)
+    if (msg.action === 'composeOpen') {
+      composeOpen(msg.to, msg.subject)
         .then(r => sendResponse(r))
         .catch(e => sendResponse({ error: e.message }));
+      return true;
+    }
+    if (msg.action === 'fillBody') {
+      fillBody(msg.body, msg.isHtml)
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
+      return true;
+    }
+    if (msg.action === 'clickSend') {
+      sendResponse(clickSend());
       return true;
     }
   });
