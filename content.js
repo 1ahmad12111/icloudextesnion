@@ -79,37 +79,98 @@
     } catch(e) {}
   }
 
-  // Write text into a contenteditable div using multiple strategies
+  // Find the actual editable body element using isContentEditable
+  function findEditableBody() {
+    // isContentEditable catches elements that are editable via inheritance,
+    // even without an explicit contenteditable attribute
+    const candidates = Array.from(document.querySelectorAll('div, p, section'))
+      .filter(el => {
+        try {
+          return el.isContentEditable &&
+                 el.tagName !== 'IFRAME' &&
+                 el.offsetHeight > 50;
+        } catch(e) { return false; }
+      })
+      .sort((a, b) => b.offsetHeight - a.offsetHeight);
+    return candidates[0] || null;
+  }
+
+  async function waitForBody(maxMs) {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      // Best: find any truly editable element (isContentEditable)
+      const byEditable = findEditableBody();
+      if (byEditable) return byEditable;
+
+      // User-provided XPath
+      const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
+      if (byXPath && byXPath.tagName !== 'IFRAME') return byXPath;
+
+      // User-provided CSS
+      const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
+      if (byCSS) return byCSS;
+
+      // [contenteditable] attribute
+      const eds = Array.from(document.querySelectorAll('[contenteditable]'))
+        .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
+        .sort((a, b) => b.offsetHeight - a.offsetHeight);
+      if (eds.length) return eds[0];
+
+      await sleep(300);
+    }
+    return null;
+  }
+
   async function fillBody(el, text, isHtml) {
+    // Click and focus the element
+    click(el);
+    await sleep(150);
     try { el.focus(); } catch(e) {}
-    await sleep(200);
+    await sleep(150);
 
     if (isHtml) {
-      try { el.innerHTML = text; } catch(e) {}
-    } else {
-      // Strategy 1: innerText
       try {
-        el.innerText = text;
+        el.innerHTML = text;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
       } catch(e) {}
+      return;
+    }
 
-      // Strategy 2: execCommand insertText (works in some contenteditable)
-      try {
-        el.focus();
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, text);
-      } catch(e) {}
+    // Strategy 1: execCommand selectAll + insertText (works in true contenteditable)
+    let worked = false;
+    try {
+      el.focus();
+      document.execCommand('selectAll', false, null);
+      const ok = document.execCommand('insertText', false, text);
+      if (ok) worked = true;
+    } catch(e) {}
 
-      // Strategy 3: clipboard paste (most reliable for rich editors)
+    if (!worked) {
+      // Strategy 2: ClipboardEvent paste
       try {
         const dt = new DataTransfer();
         dt.setData('text/plain', text);
+        dt.setData('text/html', text);
         el.focus();
-        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        const pasteOk = el.dispatchEvent(
+          new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+        );
+        if (pasteOk) worked = true;
       } catch(e) {}
     }
 
-    try { el.dispatchEvent(new Event('input',  { bubbles: true })); } catch(e) {}
-    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
+    if (!worked) {
+      // Strategy 3: set innerText directly
+      try {
+        el.innerText = text;
+        worked = true;
+      } catch(e) {}
+    }
+
+    try {
+      el.dispatchEvent(new InputEvent('input',  { bubbles: true, inputType: 'insertText', data: text }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch(e) {}
   }
 
   function hasMailUI() {
@@ -131,62 +192,26 @@
     return null;
   }
 
-  async function waitForBody(card, maxMs) {
-    const deadline = Date.now() + maxMs;
-    while (Date.now() < deadline) {
-      if (card) {
-        const ce = card.querySelector('[contenteditable]');
-        if (ce && ce.tagName !== 'IFRAME') return ce;
-        const mp = card.querySelector('ui-main-pane');
-        if (mp) {
-          const deep = mp.querySelector('div div div div div div') || mp.querySelector('div');
-          if (deep) return deep;
-        }
-      }
-      const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
-      if (byXPath && byXPath.tagName !== 'IFRAME') return byXPath;
-      const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
-      if (byCSS) return byCSS;
-      const eds = Array.from(document.querySelectorAll('[contenteditable]'))
-        .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
-        .sort((a, b) => b.offsetHeight - a.offsetHeight);
-      if (eds.length) return eds[0];
-      await sleep(300);
-    }
-    return null;
-  }
-
   function findSendBtn() {
-    // Old XPath with span
     const bySpan = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span');
     if (bySpan) return bySpan;
     const byOld = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]');
     if (byOld) return byOld;
 
-    // New full-screen compose: send is the last ui-button in the toolbar row
-    // Try ui-pane toolbar buttons
     const pane = qs('#root ui-pane') || qs('ui-pane');
     if (pane) {
-      // Last ui-button in the pane toolbar is Send
       const btns = Array.from(pane.querySelectorAll('ui-button'));
+      const byLabel = btns.find(b => /^send$/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
+      if (byLabel) return byLabel.querySelector('span') || byLabel;
       if (btns.length > 0) {
-        // Send is usually the last one in the header/toolbar
-        // Try to find one with aria-label Send or title Send
-        const byLabel = btns.find(b =>
-          /^send$/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
-        if (byLabel) return byLabel.querySelector('span') || byLabel;
-        // Otherwise try the last button (send icon)
         const last = btns[btns.length - 1];
         return last.querySelector('span') || last;
       }
     }
 
-    // Any ui-button with Send label
     const all = Array.from(document.querySelectorAll('ui-button'));
-    const byLabel = all.find(b =>
-      /^send$/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
+    const byLabel = all.find(b => /^send$/i.test(b.getAttribute('aria-label') || b.getAttribute('title') || ''));
     if (byLabel) return byLabel.querySelector('span') || byLabel;
-
     return null;
   }
 
@@ -223,10 +248,11 @@
     pressKey(subjectField, 'Tab', 9);
     await sleep(500);
 
-    // Body
-    const bodyEl = await waitForBody(card, 8000);
+    // Body — wait for the actual editable element
+    const bodyEl = await waitForBody(8000);
     if (!bodyEl) {
-      return { error: 'Body not found. card: ' + !!card + ', card HTML len: ' + (card ? card.innerHTML.length : 0) };
+      const isEditables = Array.from(document.querySelectorAll('*')).filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length;
+      return { error: 'Body not found after 8s. isContentEditable count: ' + isEditables };
     }
     await fillBody(bodyEl, body, isHtml);
     await sleep(800);
