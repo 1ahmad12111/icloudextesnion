@@ -64,21 +64,29 @@ async function execInFrame(frameId, func, args = []) {
 }
 
 async function findMainFrame() {
+  // Search ALL frames (not just ones matching a URL pattern) for the frame
+  // that actually contains iCloud Mail UI (has ui-button elements).
   for (let attempt = 0; attempt < 20; attempt++) {
     const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => []);
+    broadcast({ type: 'log', text: `Frame scan attempt ${attempt + 1}: ${frames.length} frames found.`, level: 'info' });
     for (const frame of frames) {
-      if (frame.url && frame.url.includes('icloud.com/mail') && frame.frameId !== 0) {
-        try {
-          const [r] = await chrome.scripting.executeScript({
-            target: { tabId: mailTabId, frameIds: [frame.frameId] },
-            func: () => document.querySelectorAll('ui-button').length,
-          });
-          if (r?.result > 0) return frame.frameId;
-        } catch (_) {}
-      }
+      try {
+        const [r] = await chrome.scripting.executeScript({
+          target: { tabId: mailTabId, frameIds: [frame.frameId] },
+          func: () => {
+            const btns = document.querySelectorAll('ui-button');
+            return { count: btns.length, url: location.href };
+          },
+        });
+        if (r?.result?.count > 0) {
+          broadcast({ type: 'log', text: `Mail frame found: ${frame.frameId} (${r.result.url})`, level: 'info' });
+          return frame.frameId;
+        }
+      } catch (_) {}
     }
     await sleep(500);
   }
+  broadcast({ type: 'log', text: 'Could not find mail frame with ui-buttons — using frame 0 as fallback.', level: 'err' });
   return 0;
 }
 
@@ -116,7 +124,7 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
     await attachDebugger(mailTabId);
     broadcast({ type: 'log', text: 'Debugger attached for trusted key events.', level: 'info' });
   } catch (e) {
-    broadcast({ type: 'log', text: `Debugger attach failed: ${e.message}. Token confirmation may not work.`, level: 'err' });
+    broadcast({ type: 'log', text: `Debugger attach failed: ${e.message}`, level: 'err' });
   }
 
   await waitForMailReady();
@@ -139,7 +147,7 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       await sendDebuggerKey(mailTabId, 'Enter', 13);
       broadcast({ type: 'log', text: 'Enter sent (trusted) to confirm email token.', level: 'info' });
 
-      // Step 3: Wait for token to appear, then fill Subject
+      // Step 3: Wait for token, then fill Subject
       await sleep(700);
       const subjectResult = await execInFrame(mailFrameId, fillSubject, [subject]);
       if (subjectResult?.error) throw new Error(subjectResult.error);
@@ -193,12 +201,13 @@ async function waitForMailReady() {
     try {
       const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => []);
       for (const frame of frames) {
-        if (!frame.url || !frame.url.includes('icloud')) continue;
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: mailTabId, frameIds: [frame.frameId] },
-          func: () => document.querySelectorAll('ui-button').length > 0,
-        }).catch(() => [{}]);
-        if (r?.result) return;
+        try {
+          const [r] = await chrome.scripting.executeScript({
+            target: { tabId: mailTabId, frameIds: [frame.frameId] },
+            func: () => document.querySelectorAll('ui-button').length > 0,
+          });
+          if (r?.result) return;
+        } catch (_) {}
       }
     } catch (_) {}
     await sleep(1000);
@@ -242,22 +251,28 @@ function openComposeAndFillTo(toEmail) {
   }
 
   return (async () => {
-    // 1. Find compose button via XPath
+    // 1. Find compose button via XPath first, then fallback
     let composeBtn = null;
-    const xpathResult = document.evaluate(
-      '//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button',
-      document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
-    );
-    composeBtn = xpathResult.singleNodeValue;
+    try {
+      const xr = document.evaluate(
+        '//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button',
+        document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null
+      );
+      composeBtn = xr.singleNodeValue;
+    } catch (_) {}
 
     if (!composeBtn) {
       composeBtn = [...document.querySelectorAll('ui-button')]
         .find(b => {
           const lbl = (b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
-          return lbl.includes('compose') || lbl.includes('new');
+          return lbl.includes('compose') || lbl.includes('new message') || lbl.includes('new mail');
         });
     }
-    if (!composeBtn) return { error: `Compose button not found. ui-buttons: ${[...document.querySelectorAll('ui-button')].map(b => b.getAttribute('aria-label')).join(', ')}` };
+
+    if (!composeBtn) {
+      const allBtns = [...document.querySelectorAll('ui-button')].map(b => b.getAttribute('aria-label') || b.textContent?.trim()).join(' | ');
+      return { error: `Compose button not found. ui-buttons: ${allBtns}` };
+    }
 
     click(composeBtn);
     await sleep(1800);
