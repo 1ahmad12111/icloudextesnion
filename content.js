@@ -55,8 +55,32 @@
   }
 
   function findComposeBtn() {
-    return xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button') ||
-           Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
+    // Strategy 1: known XPath (desktop en-us layout)
+    const byXpath = xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
+    if (byXpath) return byXpath;
+
+    // Strategy 2: aria-label in many languages
+    const COMPOSE_LABELS = ['compose', 'new message', 'new mail', '新規メッセージを作成', '作成',
+      'nouveau message', 'verfassen', 'redactar', '新建', '撰写', 'scrivi', 'nieuw bericht'];
+    const byLabel = Array.from(document.querySelectorAll('ui-button, button, [role="button"]'))
+      .find(b => {
+        const lbl = (b.getAttribute('aria-label') || '').toLowerCase().trim();
+        return COMPOSE_LABELS.some(l => lbl.includes(l));
+      });
+    if (byLabel) return byLabel;
+
+    // Strategy 3: visible text "New Message" or "Compose"
+    const byText = Array.from(document.querySelectorAll('ui-button, button, [role="button"], a'))
+      .find(el => /new\s*message|compose/i.test((el.textContent || '').trim()));
+    if (byText) return byText;
+
+    // Strategy 4: first ui-button in app-body containing an SVG (pencil/compose icon)
+    const byIcon = Array.from(document.querySelectorAll('#app-body ui-button'))
+      .find(b => b.querySelector('svg') || (b.shadowRoot && b.shadowRoot.querySelector('svg')));
+    if (byIcon) return byIcon;
+
+    // Strategy 5: positional fallback — 3rd ui-button in app-body
+    return Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
   }
 
   function hasMailUI() {
