@@ -9,16 +9,16 @@
       el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))); } catch(e) {}
   }
 
-  function pressKey(el, key, code, extra) {
+  function pressKey(el, key, code) {
     try {
       ['keydown','keypress','keyup'].forEach(t =>
-        el.dispatchEvent(new KeyboardEvent(t, Object.assign({ key, keyCode: code, which: code, bubbles: true }, extra || {}))));
+        el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
     } catch(e) {}
   }
 
-  function xpath(expr, ctx) {
+  function xpath(expr) {
     try {
-      return document.evaluate(expr, ctx || document, null,
+      return document.evaluate(expr, document, null,
         XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue || null;
     } catch(e) { return null; }
   }
@@ -28,30 +28,52 @@
   }
 
   function shadowInput(el) {
-    if (!el) return null;
-    if (el.shadowRoot) return el.shadowRoot.querySelector('input') || null;
-    return null;
+    if (!el || !el.shadowRoot) return null;
+    return el.shadowRoot.querySelector('input') || null;
   }
 
-  // Pierce shadow roots of all ui-autocomplete-field elements
   function getAutoCompleteInputs() {
     return Array.from(document.querySelectorAll('ui-autocomplete-field'))
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  // Type into an input field and commit
+  // Find a field whose label text matches labelText (pierces shadow roots)
+  function findFieldByLabelText(labelText) {
+    const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
+    const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
+      .filter(el => re.test((el.textContent || '').trim()));
+    for (const label of labels) {
+      const id = label.id;
+      if (id) {
+        const inp = document.querySelector('[aria-labelledby="' + id + '"]');
+        if (inp) return inp;
+        for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
+          if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
+          if (cel.shadowRoot) {
+            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
+            if (si) return si;
+          }
+        }
+      }
+      const parent = label.closest('[class*="field"], [class*="row"], li, div') || label.parentElement;
+      if (parent) {
+        const si = parent.querySelector('input, [contenteditable], ui-autocomplete-field');
+        if (si && si !== label) return si;
+      }
+    }
+    return null;
+  }
+
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
     try {
-      // Clear then set value
       el.value = value;
       el.dispatchEvent(new Event('input',  { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     } catch(e) {}
     await sleep(100);
     try {
-      // Also use execCommand as fallback for React
       el.focus();
       document.execCommand('selectAll', false, null);
       document.execCommand('insertText', false, value);
@@ -67,144 +89,124 @@
            Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
   }
 
-  // The compose dialog lives inside #root > ui-pane > ui-card
-  function getComposeCard() {
-    return qs('#root ui-card') || qs('ui-card') || qs('#root ui-pane') || null;
-  }
-
-  // Wait for compose card to appear after clicking compose
+  // Wait for compose card to appear (has at least one input)
   async function waitForComposeCard(maxMs) {
     const deadline = Date.now() + maxMs;
     while (Date.now() < deadline) {
-      const card = getComposeCard();
-      // Card must have at least one input (To field)
+      const card = qs('#root ui-card') || qs('ui-card');
       if (card && card.querySelector('input, ui-autocomplete-field')) return card;
       await sleep(200);
     }
     return null;
   }
 
-  // Find body field WITHIN the compose card
+  // Find the body field inside the compose card
   async function waitForBody(card, maxMs) {
     const deadline = Date.now() + maxMs;
     while (Date.now() < deadline) {
-      // Try contenteditable inside the card
+      // contenteditable inside the card
       if (card) {
         const ce = card.querySelector('[contenteditable]');
         if (ce && ce.tagName !== 'IFRAME') return ce;
-
-        // Try ui-main-pane children inside card
+        // ui-main-pane deep div inside card
         const mp = card.querySelector('ui-main-pane');
         if (mp) {
           const deep = mp.querySelector('div div div div div div') || mp.querySelector('div');
           if (deep) return deep;
         }
       }
-
-      // Also try user's exact XPath
+      // User-provided XPath
       const byXPath = xpath('/html/body/div[2]/ui-main-pane/div/div/div/div/div/div');
       if (byXPath && byXPath.tagName !== 'IFRAME') return byXPath;
-
-      // Try user's CSS selector
+      // User-provided CSS
       const byCSS = qs('body > div:nth-child(4) > ui-main-pane > div > div > div > div > div > div');
       if (byCSS) return byCSS;
-
-      // Largest visible contenteditable
+      // Any visible contenteditable
       const eds = Array.from(document.querySelectorAll('[contenteditable]'))
         .filter(el => { try { return el.tagName !== 'IFRAME' && el.offsetHeight > 30 && el.offsetParent; } catch(e) { return false; } })
         .sort((a, b) => b.offsetHeight - a.offsetHeight);
       if (eds.length) return eds[0];
-
       await sleep(300);
     }
     return null;
   }
 
   function findSendBtn() {
-    // User-provided XPath (with /span at end)
     const bySpan = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]/span');
     if (bySpan) return bySpan;
-
     const byBtn = xpath('//*[@id="root"]/ui-pane/ui-card/div/div/div[1]/div[2]/div[2]/ui-button[2]');
     if (byBtn) return byBtn;
-
-    // Any ui-button with aria-label/title Send
     const uiButtons = Array.from(document.querySelectorAll('ui-button'));
     for (const ub of uiButtons) {
       const a = (ub.getAttribute('aria-label') || '').toLowerCase();
       const t = (ub.getAttribute('title') || '').toLowerCase();
-      if (a === 'send' || t === 'send') {
-        return ub.querySelector('span') || ub;
-      }
+      if (a === 'send' || t === 'send') return ub.querySelector('span') || ub;
     }
     return null;
   }
 
   async function compose(to, subject, body, isHtml) {
-    // 1. Click compose button
+    // 1. Compose
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found' };
     click(composeBtn);
 
-    // 2. Wait for compose card to appear
+    // 2. Wait for card
     const card = await waitForComposeCard(5000);
     if (!card) return { error: 'Compose dialog did not open' };
-    await sleep(800);
+    await sleep(600);
 
-    // 3. Fill To field — find inputs inside the card
-    const acInputs = getAutoCompleteInputs();
-    const toField = acInputs[0] ||
-      qs('input', card) ||
-      Array.from(document.querySelectorAll('input')).find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+    // 3. To field
+    let toField = findFieldByLabelText('To');
+    if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
+    if (!toField) toField = Array.from(document.querySelectorAll('input'))
+      .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found' };
     await typeInto(toField, to);
     await sleep(300);
     pressKey(toField, 'Tab', 9);
     await sleep(500);
 
-    // 4. Fill Subject — second input
-    const subjectField = acInputs[1] ||
-      Array.from(card ? card.querySelectorAll('input') : document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1] ||
-      Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
+    // 4. Subject field
+    let subjectField = findFieldByLabelText('Subject');
+    if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
+    if (!subjectField) {
+      const allInputs = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+      subjectField = allInputs[1] || allInputs[0];
+    }
     if (!subjectField) return { error: 'Subject field not found' };
     await typeInto(subjectField, subject);
     await sleep(300);
     pressKey(subjectField, 'Tab', 9);
     await sleep(500);
 
-    // 5. Fill body — wait for it to appear inside the card
+    // 5. Body
     const bodyEl = await waitForBody(card, 8000);
     if (!bodyEl) {
       const mp = qs('ui-main-pane', card);
-      return { error: 'Body not found in compose. card found: ' + !!card +
-        ', ui-main-pane: ' + !!mp +
-        ', card innerHTML len: ' + (card ? card.innerHTML.length : 0) };
+      return { error: 'Body not found. card: ' + !!card + ', ui-main-pane: ' + !!mp };
     }
     try {
       bodyEl.focus();
       if (isHtml) {
         bodyEl.innerHTML = body;
+        bodyEl.dispatchEvent(new Event('input', { bubbles: true }));
       } else {
-        // Use execCommand so iCloud registers the edit
-        bodyEl.focus();
         document.execCommand('selectAll', false, null);
         document.execCommand('insertText', false, body);
       }
-      bodyEl.dispatchEvent(new Event('input',  { bubbles: true }));
-      bodyEl.dispatchEvent(new Event('change', { bubbles: true }));
     } catch(e) {
       return { error: 'Body fill error: ' + e.message };
     }
     await sleep(800);
 
-    // 6. Click Send
+    // 6. Send
     const sendBtn = findSendBtn();
     if (!sendBtn) {
       const labels = Array.from(document.querySelectorAll('ui-button'))
         .map(b => (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim().substring(0, 20));
-      return { error: 'Send button not found. ui-button labels: ' + JSON.stringify(labels) };
+      return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) };
     }
     click(sendBtn);
     await sleep(2000);
