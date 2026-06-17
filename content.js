@@ -4,16 +4,28 @@
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+  // Click with full pointer event sequence at element center coordinates
   function click(el) {
+    try {
+      const rect = el.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
+      el.dispatchEvent(new PointerEvent('pointerover',  Object.assign({ isPrimary: true }, opts)));
+      el.dispatchEvent(new PointerEvent('pointerdown',  Object.assign({ isPrimary: true }, opts)));
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new PointerEvent('pointerup',    Object.assign({ isPrimary: true }, opts)));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new MouseEvent('click', opts));
+    } catch(e) {}
     try { el.click(); } catch(e) {}
-    try { ['mousedown','mouseup','click'].forEach(t =>
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }))); } catch(e) {}
   }
 
   function pressKey(el, key, code, extra) {
     try {
       ['keydown','keypress','keyup'].forEach(t =>
-        el.dispatchEvent(new KeyboardEvent(t, Object.assign({ key, keyCode: code, which: code, bubbles: true, cancelable: true }, extra || {}))));
+        el.dispatchEvent(new KeyboardEvent(t, Object.assign(
+          { key, keyCode: code, which: code, bubbles: true, cancelable: true }, extra || {}))));
     } catch(e) {}
   }
 
@@ -36,17 +48,6 @@
   function getAutoCompleteInputs() {
     return Array.from(document.querySelectorAll('ui-autocomplete-field'))
       .map(el => shadowInput(el)).filter(Boolean);
-  }
-
-  function setNativeValue(el, value) {
-    try {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      setter.call(el, value);
-    } catch(e) {
-      try { el.value = value; } catch(e2) {}
-    }
-    try { el.dispatchEvent(new Event('input',  { bubbles: true })); } catch(e) {}
-    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
   }
 
   function findFieldByLabelText(labelText) {
@@ -75,10 +76,13 @@
     return null;
   }
 
+  // Simple fill — restore the approach that was working before
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
-    setNativeValue(el, value);
+    try { el.value = value; } catch(e) {}
+    try { el.dispatchEvent(new Event('input',  { bubbles: true })); } catch(e) {}
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
     await sleep(100);
     try {
       el.focus();
@@ -116,20 +120,17 @@
       lines.push('iframe[' + i + '] src: ' + (fr.src || '').substring(0, 70));
       try {
         const fd = fr.contentDocument;
-        lines.push('iframe[' + i + '] accessible: ' + !!fd +
-          (fd ? ', designMode: ' + fd.designMode + ', CE: ' + fd.querySelectorAll('[contenteditable]').length : ''));
+        lines.push('iframe[' + i + '] accessible:' + !!fd +
+          (fd ? ' designMode:' + fd.designMode : ''));
       } catch(e) { lines.push('iframe[' + i + '] blocked'); }
     });
-    lines.push('[contenteditable]: ' + document.querySelectorAll('[contenteditable]').length);
-    lines.push('designMode: ' + document.designMode);
-    lines.push('body.isContentEditable: ' + document.body.isContentEditable);
     const btnLabels = Array.from(document.querySelectorAll('ui-button'))
       .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
     lines.push('ui-button labels: ' + JSON.stringify(btnLabels));
     return lines.join(' | ');
   }
 
-  // ── Action: composeOpen ────────────────────────────────────────────────────────
+  // ── Action: composeOpen ─────────────────────────────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -139,12 +140,15 @@
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(1000);
 
-    // To
+    // To field
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
+    // Click the parent ui-autocomplete-field to ensure it's focused
+    try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
+    await sleep(200);
     await typeInto(toField, to);
     await sleep(400);
     pressKey(toField, 'Enter', 13);
@@ -152,7 +156,7 @@
     pressKey(toField, 'Tab', 9);
     await sleep(500);
 
-    // Subject
+    // Subject field
     let subjectField = findFieldByLabelText('Subject');
     if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
     if (!subjectField) {
@@ -168,7 +172,7 @@
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs in mail2-rte iframe) ────────────────────────────
+  // ── Action: fillBody (runs in mail2-rte iframe) ───────────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
@@ -187,8 +191,7 @@
     } else {
       try {
         document.execCommand('selectAll', false, null);
-        const ok = document.execCommand('insertText', false, body);
-        if (!ok) throw new Error('false');
+        document.execCommand('insertText', false, body);
       } catch(e) {
         try {
           const dt = new DataTransfer();
@@ -205,12 +208,20 @@
     try { ed.blur(); } catch(e) {}
     await sleep(300);
 
+    // Try sending Cmd+Enter from inside the RTE iframe (may bubble to parent)
+    try {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', keyCode: 13, metaKey: true, ctrlKey: true,
+        bubbles: true, cancelable: true
+      }));
+    } catch(e) {}
+
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend ─────────────────────────────────────────────────────────
+  // ── Action: clickSend ────────────────────────────────────────────────────────
   async function clickSend() {
-    await sleep(500);
+    await sleep(600);
 
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => b.getAttribute('aria-label') === 'Send Message');
@@ -221,24 +232,23 @@
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
 
-    // Try: native .click(), then shadow root button, then dispatched events
-    try { sendBtn.click(); } catch(e) {}
+    // Full pointer event sequence at real coordinates
+    click(sendBtn);
     await sleep(300);
 
-    // Click whatever is inside the shadow root
+    // Also try shadow root inner element
     if (sendBtn.shadowRoot) {
-      const inner = sendBtn.shadowRoot.querySelector('button, [role="button"], span, div');
-      if (inner) {
-        try { inner.click(); } catch(e) {}
-        try { ['mousedown','mouseup','click'].forEach(t =>
-          inner.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }))); } catch(e) {}
-      }
+      const inner = sendBtn.shadowRoot.querySelector('button, [role="button"], span');
+      if (inner) { click(inner); }
     }
     await sleep(300);
 
-    // Keyboard shortcut as final fallback (Cmd+Enter / Ctrl+Enter)
+    // Keyboard shortcut in this frame too
     try {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', keyCode: 13, metaKey: true, ctrlKey: true,
+        bubbles: true, cancelable: true
+      }));
     } catch(e) {}
 
     return { ok: true };
