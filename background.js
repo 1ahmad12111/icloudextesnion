@@ -46,7 +46,6 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
 
   mailTabId = await getOrOpenMailTab();
 
-  // Attach debugger for trusted Enter key events
   try {
     await attachDebugger(mailTabId);
     broadcast({ type: 'log', text: 'Debugger attached.', level: 'info' });
@@ -57,7 +56,6 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   broadcast({ type: 'log', text: 'Waiting for iCloud Mail to load...', level: 'info' });
   await sleep(3000);
 
-  // Re-inject content script into ALL frames
   try {
     await chrome.scripting.executeScript({
       target: { tabId: mailTabId, allFrames: true },
@@ -66,7 +64,6 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   } catch(e) {}
   await sleep(1000);
 
-  // Find the mail UI frame
   const mailFrameId = await findMailFrame();
   if (mailFrameId === null) {
     broadcast({ type: 'log', text: 'Could not find iCloud Mail UI frame. Are you logged in?', level: 'err' });
@@ -80,23 +77,26 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      // Step 1: Open compose and type To address (stops with focus on To input)
+      // Step 1: Open compose and type To address (returns with To input focused)
       const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: email });
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
       broadcast({ type: 'log', text: 'Compose open, To typed.', level: 'info' });
 
-      // Step 2: Fire trusted Enter via debugger to confirm the email token
-      await sleep(200);
+      // Step 2: Fire trusted Enter via debugger to confirm the email token.
+      // Fire quickly (50ms) while the To input still has focus, then retry after 400ms.
+      await sleep(50);
       await sendDebuggerEnter(mailTabId);
+      await sleep(400);
+      await sendDebuggerEnter(mailTabId); // second attempt in case focus shifted
       broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
 
-      // Step 3: Fill Subject (after token confirmed)
-      await sleep(800);
+      // Step 3: Fill Subject
+      await sleep(600);
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
-      // Step 4: Find the RTE iframe (body editor)
+      // Step 4: Find RTE iframe
       const rteFrameId = await findRteFrame(4000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
@@ -129,8 +129,6 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
   broadcast({ type: 'done', sent, total });
 }
 
-// ── Frame finders ─────────────────────────────────────────────────────────────
-
 async function findMailFrame() {
   const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => null);
   if (!frames) {
@@ -158,8 +156,6 @@ async function findRteFrame(maxMs) {
   }
   return null;
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sendToFrame(frameId, msg) {
   return new Promise((resolve) => {

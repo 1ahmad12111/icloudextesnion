@@ -86,7 +86,6 @@
   }
 
   function hasMailUI() {
-    // Require #app-body or the compose button — not just any ui-button on the page
     return !!(qs('#app-body') || findComposeBtn());
   }
 
@@ -125,7 +124,6 @@
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(800);
 
-    // Find To field
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
@@ -138,9 +136,11 @@
     await typeInto(toField, to);
     await sleep(300);
 
-    // Keep focus on input so the upcoming trusted Enter key lands here
+    // Aggressively re-focus the input so the upcoming trusted Enter key lands here
+    try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
+    await sleep(50);
     try { toField.focus(); } catch(e) {}
-    await sleep(100);
+    await sleep(50);
 
     return { ok: true };
   }
