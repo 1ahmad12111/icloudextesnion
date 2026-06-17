@@ -88,6 +88,26 @@
     } catch(e) {}
   }
 
+  // Wait for the To field to show a confirmed token chip
+  async function waitForTokenConfirm(maxMs) {
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+      // iCloud renders confirmed tokens as elements with a close/remove button
+      const token = document.querySelector(
+        'ui-autocomplete-field [class*="token"], ' +
+        'ui-autocomplete-field [class*="recipient"], ' +
+        'ui-autocomplete-field [role="option"], ' +
+        'ui-autocomplete-field [aria-label*="@"]'
+      );
+      if (token) return true;
+      // Also check if the input is now empty (value was consumed into a token)
+      const inp = getAutoCompleteInputs()[0];
+      if (inp && inp.value === '') return true;
+      await sleep(200);
+    }
+    return false;
+  }
+
   function hasMailUI() {
     return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
   }
@@ -124,7 +144,6 @@
     const iframes = Array.from(document.querySelectorAll('iframe'));
     lines.push('iframes: ' + iframes.length);
     iframes.slice(0, 3).forEach((fr, i) => {
-      lines.push('iframe[' + i + '] src: ' + (fr.src || '').substring(0, 70));
       try {
         const fd = fr.contentDocument;
         lines.push('iframe[' + i + '] accessible:' + !!fd);
@@ -146,38 +165,47 @@
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(1000);
 
-    // Find both fields up front
+    // Find subject first so we can use it to trigger blur on To field
+    let subjectField = findSubjectInput();
+
+    // Find To field
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
 
-    let subjectField = findSubjectInput();
-    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
-
-    // Type email into To field
-    try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
+    // Focus and type email
+    try { toField.focus(); } catch(e) {}
     await sleep(200);
     await typeInto(toField, to);
-    await sleep(500);
+    await sleep(400);
 
-    // Confirm token by clicking the Subject field — this triggers blur on To field
-    // which is what iCloud uses to confirm the email token (same as pressing Enter manually)
-    click(subjectField.closest('ui-autocomplete-field') || subjectField);
-    try { subjectField.focus(); } catch(e) {}
-    await sleep(800); // wait for token to appear
+    // Confirm token using native blur() + focus() on subject
+    // These generate TRUSTED focus/blur events (unlike dispatched events)
+    try { toField.blur(); } catch(e) {}
+    await sleep(200);
+    if (subjectField) {
+      try { subjectField.focus(); } catch(e) {}
+    }
+    await sleep(600);
 
-    // Type subject
+    // Wait for token to be confirmed (input value clears or chip appears)
+    await waitForTokenConfirm(2000);
+
+    // Refresh subject field reference and fill it
+    if (!subjectField) subjectField = findSubjectInput();
+    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
-    pressKey(subjectField, 'Tab', 9);
+    // Native blur to commit subject
+    try { subjectField.blur(); } catch(e) {}
     await sleep(800);
 
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs in mail2-rte iframe) ─────────────────────────
+  // ── Action: fillBody (runs in mail2-rte iframe) ────────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
@@ -218,7 +246,7 @@
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend ──────────────────────────────────────────────────
+  // ── Action: clickSend ────────────────────────────────────────────────
   async function clickSend() {
     await sleep(600);
 
@@ -239,7 +267,9 @@
       const realTarget = document.elementFromPoint(x, y);
       if (realTarget) {
         realTarget.click();
-        realTarget.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
+        realTarget.dispatchEvent(new MouseEvent('click', {
+          bubbles: true, cancelable: true, clientX: x, clientY: y, view: window
+        }));
         await sleep(200);
       }
     } catch(e) {}
@@ -247,7 +277,6 @@
     click(sendBtn);
     await sleep(300);
 
-    // Keyboard shortcut fallback
     try {
       document.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'Enter', keyCode: 13, metaKey: true, ctrlKey: true,
