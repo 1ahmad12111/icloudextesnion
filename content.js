@@ -80,13 +80,14 @@
     } catch(e) {}
   }
 
-  function hasMailUI() {
-    return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
-  }
-
   function findComposeBtn() {
     return xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button') ||
            Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
+  }
+
+  function hasMailUI() {
+    // Require #app-body or the compose button — not just any ui-button on the page
+    return !!(qs('#app-body') || findComposeBtn());
   }
 
   async function waitForComposeCard(maxMs) {
@@ -115,8 +116,6 @@
   }
 
   // ── Action: openCompose ─────────────────────────────────────────────────────
-  // Opens compose dialog and types the To address — stops there so background
-  // can fire a trusted Enter key via the debugger API to confirm the token.
   async function openCompose(to) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -133,15 +132,13 @@
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
 
-    // Click the autocomplete field container first to ensure focus
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
 
-    // Type the email address
     await typeInto(toField, to);
     await sleep(300);
 
-    // Keep focus on the input so the upcoming trusted Enter key lands here
+    // Keep focus on input so the upcoming trusted Enter key lands here
     try { toField.focus(); } catch(e) {}
     await sleep(100);
 
@@ -149,7 +146,6 @@
   }
 
   // ── Action: fillSubject ─────────────────────────────────────────────────────
-  // Called after background fires the trusted Enter to confirm To token.
   async function fillSubject(subject) {
     let subjectField = findFieldByLabelText('Subject');
     if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
@@ -213,12 +209,10 @@
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) };
     }
 
-    // Check disabled
     const isDisabled = sendBtn.hasAttribute('disabled') ||
       sendBtn.getAttribute('aria-disabled') === 'true';
     if (isDisabled) return { error: 'Send button is disabled — To token may not be confirmed' };
 
-    // Pierce shadow DOM via elementFromPoint
     try {
       const rect = sendBtn.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
