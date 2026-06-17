@@ -5,14 +5,15 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function click(el) {
+    try { el.click(); } catch(e) {}
     try { ['mousedown','mouseup','click'].forEach(t =>
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }))); } catch(e) {}
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }))); } catch(e) {}
   }
 
-  function pressKey(el, key, code) {
+  function pressKey(el, key, code, extra) {
     try {
       ['keydown','keypress','keyup'].forEach(t =>
-        el.dispatchEvent(new KeyboardEvent(t, { key, keyCode: code, which: code, bubbles: true })));
+        el.dispatchEvent(new KeyboardEvent(t, Object.assign({ key, keyCode: code, which: code, bubbles: true, cancelable: true }, extra || {}))));
     } catch(e) {}
   }
 
@@ -37,7 +38,6 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  // React-friendly value setter for inputs
   function setNativeValue(el, value) {
     try {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -78,10 +78,8 @@
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
-    // React-friendly native setter first
     setNativeValue(el, value);
     await sleep(100);
-    // execCommand as secondary approach
     try {
       el.focus();
       document.execCommand('selectAll', false, null);
@@ -108,7 +106,6 @@
     return null;
   }
 
-  // ── Diagnostics ─────────────────────────────────────────────────────────────────
   function diagnose() {
     const lines = [];
     lines.push('url: ' + window.location.href.substring(0, 80));
@@ -132,7 +129,7 @@
     return lines.join(' | ');
   }
 
-  // ── Action: composeOpen (runs in mail UI frame) ─────────────────────────────
+  // ── Action: composeOpen ────────────────────────────────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -142,22 +139,20 @@
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(1000);
 
-    // To field — try label first, then shadow inputs
+    // To
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
-
     await typeInto(toField, to);
     await sleep(400);
-    // Press Enter to confirm the email token, then Tab to move focus
     pressKey(toField, 'Enter', 13);
     await sleep(200);
     pressKey(toField, 'Tab', 9);
     await sleep(500);
 
-    // Subject field
+    // Subject
     let subjectField = findFieldByLabelText('Subject');
     if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
     if (!subjectField) {
@@ -173,7 +168,7 @@
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs inside the mail2-rte iframe) ────────────────────
+  // ── Action: fillBody (runs in mail2-rte iframe) ────────────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
@@ -206,32 +201,46 @@
     }
 
     try { ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); } catch(e) {}
-    await sleep(200);
-
-    // Blur the editor to commit content before send
+    await sleep(300);
     try { ed.blur(); } catch(e) {}
-    await sleep(200);
+    await sleep(300);
 
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend (runs in mail UI frame) ─────────────────────────────
+  // ── Action: clickSend ─────────────────────────────────────────────────────────
   async function clickSend() {
-    // Wait briefly in case the RTE needs a moment to commit
     await sleep(500);
 
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => b.getAttribute('aria-label') === 'Send Message');
+
     if (!sendBtn) {
       const labels = Array.from(document.querySelectorAll('ui-button'))
         .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
 
-    click(sendBtn);
-    await sleep(500);
-    // Click a second time in case the first was ignored
-    click(sendBtn);
+    // Try: native .click(), then shadow root button, then dispatched events
+    try { sendBtn.click(); } catch(e) {}
+    await sleep(300);
+
+    // Click whatever is inside the shadow root
+    if (sendBtn.shadowRoot) {
+      const inner = sendBtn.shadowRoot.querySelector('button, [role="button"], span, div');
+      if (inner) {
+        try { inner.click(); } catch(e) {}
+        try { ['mousedown','mouseup','click'].forEach(t =>
+          inner.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }))); } catch(e) {}
+      }
+    }
+    await sleep(300);
+
+    // Keyboard shortcut as final fallback (Cmd+Enter / Ctrl+Enter)
+    try {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
+    } catch(e) {}
+
     return { ok: true };
   }
 
