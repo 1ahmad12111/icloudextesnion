@@ -88,24 +88,6 @@
     } catch(e) {}
   }
 
-  // Confirm the email token in a ui-autocomplete-field by pressing Enter then Tab
-  // on BOTH the inner shadow input and the outer element
-  async function confirmToken(inputEl) {
-    const parent = inputEl.closest('ui-autocomplete-field') || inputEl.parentElement;
-    // Enter on inner input
-    pressKey(inputEl, 'Enter', 13);
-    await sleep(150);
-    // Enter on parent too
-    if (parent && parent !== inputEl) pressKey(parent, 'Enter', 13);
-    await sleep(150);
-    // Tab on inner input
-    pressKey(inputEl, 'Tab', 9);
-    await sleep(150);
-    // Tab on parent too
-    if (parent && parent !== inputEl) pressKey(parent, 'Tab', 9);
-    await sleep(500);
-  }
-
   function hasMailUI() {
     return !!(qs('#app-body') || qs('ui-split-container') || qs('ui-button'));
   }
@@ -125,18 +107,27 @@
     return null;
   }
 
+  function findSubjectInput() {
+    let f = findFieldByLabelText('Subject');
+    if (!f) { const ac = getAutoCompleteInputs(); f = ac[1]; }
+    if (!f) {
+      f = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
+    }
+    return f || null;
+  }
+
   function diagnose() {
     const lines = [];
     lines.push('url: ' + window.location.href.substring(0, 80));
     lines.push('hasMailUI: ' + hasMailUI());
     const iframes = Array.from(document.querySelectorAll('iframe'));
     lines.push('iframes: ' + iframes.length);
-    iframes.slice(0, 5).forEach((fr, i) => {
+    iframes.slice(0, 3).forEach((fr, i) => {
       lines.push('iframe[' + i + '] src: ' + (fr.src || '').substring(0, 70));
       try {
         const fd = fr.contentDocument;
-        lines.push('iframe[' + i + '] accessible:' + !!fd +
-          (fd ? ' designMode:' + fd.designMode : ''));
+        lines.push('iframe[' + i + '] accessible:' + !!fd);
       } catch(e) { lines.push('iframe[' + i + '] blocked'); }
     });
     const btnLabels = Array.from(document.querySelectorAll('ui-button'))
@@ -145,7 +136,7 @@
     return lines.join(' | ');
   }
 
-  // ── Action: composeOpen ──────────────────────────────────────────────────
+  // ── Action: composeOpen ───────────────────────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -155,28 +146,29 @@
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(1000);
 
-    // To field
+    // Find both fields up front
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
-    // Click parent to focus
+
+    let subjectField = findSubjectInput();
+    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
+
+    // Type email into To field
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
     await typeInto(toField, to);
-    await sleep(400);
-    // Confirm the token with Enter+Tab on both inner input and parent
-    await confirmToken(toField);
+    await sleep(500);
 
-    // Subject field
-    let subjectField = findFieldByLabelText('Subject');
-    if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
-    if (!subjectField) {
-      subjectField = Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
-    }
-    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
+    // Confirm token by clicking the Subject field — this triggers blur on To field
+    // which is what iCloud uses to confirm the email token (same as pressing Enter manually)
+    click(subjectField.closest('ui-autocomplete-field') || subjectField);
+    try { subjectField.focus(); } catch(e) {}
+    await sleep(800); // wait for token to appear
+
+    // Type subject
     await typeInto(subjectField, subject);
     await sleep(300);
     pressKey(subjectField, 'Tab', 9);
@@ -226,7 +218,7 @@
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend ────────────────────────────────────────────────────
+  // ── Action: clickSend ──────────────────────────────────────────────────
   async function clickSend() {
     await sleep(600);
 
@@ -252,7 +244,6 @@
       }
     } catch(e) {}
 
-    // Also click the ui-button itself
     click(sendBtn);
     await sleep(300);
 
