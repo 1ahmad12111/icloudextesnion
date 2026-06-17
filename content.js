@@ -98,14 +98,47 @@
     return null;
   }
 
-  // ── Action: composeOpen (runs in mail UI frame) ───────────────────────────────
+  // ── Diagnostics ──────────────────────────────────────────────────────────────────
+  function diagnose() {
+    const lines = [];
+    lines.push('url: ' + window.location.href.substring(0, 80));
+    lines.push('hasMailUI: ' + hasMailUI());
+
+    // iframes
+    const iframes = Array.from(document.querySelectorAll('iframe'));
+    lines.push('iframes: ' + iframes.length);
+    iframes.slice(0, 5).forEach((fr, i) => {
+      lines.push('iframe[' + i + '] src: ' + (fr.src || '').substring(0, 70));
+      try {
+        const fd = fr.contentDocument;
+        lines.push('iframe[' + i + '] accessible: ' + !!fd +
+          (fd ? ', designMode: ' + fd.designMode + ', CE: ' + fd.querySelectorAll('[contenteditable]').length : ''));
+      } catch(e) { lines.push('iframe[' + i + '] blocked'); }
+    });
+
+    // editables in this doc
+    lines.push('[contenteditable]: ' + document.querySelectorAll('[contenteditable]').length);
+    lines.push('isContentEditable: ' +
+      Array.from(document.querySelectorAll('*')).filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length);
+    lines.push('designMode: ' + document.designMode);
+    lines.push('body.isContentEditable: ' + document.body.isContentEditable);
+
+    // ui-button labels
+    const btnLabels = Array.from(document.querySelectorAll('ui-button'))
+      .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
+    lines.push('ui-button labels: ' + JSON.stringify(btnLabels));
+
+    return lines.join(' | ');
+  }
+
+  // ── Action: composeOpen (runs in mail UI frame) ──────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
-    if (!composeBtn) return { error: 'Compose button not found' };
+    if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
     click(composeBtn);
 
     const card = await waitForComposeCard(5000);
-    if (!card) return { error: 'Compose dialog did not open' };
+    if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
     await sleep(800);
 
     // To field
@@ -113,7 +146,7 @@
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
-    if (!toField) return { error: 'To field not found' };
+    if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
     await typeInto(toField, to);
     await sleep(300);
     pressKey(toField, 'Tab', 9);
@@ -126,7 +159,7 @@
       subjectField = Array.from(document.querySelectorAll('input'))
         .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
     }
-    if (!subjectField) return { error: 'Subject field not found' };
+    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
     pressKey(subjectField, 'Tab', 9);
@@ -135,9 +168,8 @@
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs inside the mail2-rte iframe) ──────────────────────
+  // ── Action: fillBody (runs inside the mail2-rte iframe) ─────────────────────
   async function fillBody(body, isHtml) {
-    // The RTE iframe's document.body IS the editor
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
                document.body;
@@ -153,13 +185,11 @@
         try { ed.innerHTML = body; } catch(e2) {}
       }
     } else {
-      // execCommand on the iframe's own document
       try {
         document.execCommand('selectAll', false, null);
         const ok = document.execCommand('insertText', false, body);
-        if (!ok) throw new Error('insertText returned false');
+        if (!ok) throw new Error('false');
       } catch(e) {
-        // clipboard paste fallback
         try {
           const dt = new DataTransfer();
           dt.setData('text/plain', body);
@@ -172,18 +202,17 @@
 
     try { ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); } catch(e) {}
     await sleep(200);
-    return { ok: true };
+    return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend (runs in mail UI frame) ─────────────────────────────────
+  // ── Action: clickSend (runs in mail UI frame) ───────────────────────────────
   function clickSend() {
-    // aria-label is "Send Message" (confirmed from diagnostics)
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => b.getAttribute('aria-label') === 'Send Message');
     if (!sendBtn) {
       const labels = Array.from(document.querySelectorAll('ui-button'))
         .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
-      return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) };
+      return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
     click(sendBtn);
     return { ok: true };
@@ -192,6 +221,10 @@
   chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
     if (msg.action === 'ping') {
       sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href });
+      return true;
+    }
+    if (msg.action === 'diagnose') {
+      sendResponse({ diag: diagnose() });
       return true;
     }
     if (msg.action === 'composeOpen') {
@@ -203,7 +236,7 @@
     if (msg.action === 'fillBody') {
       fillBody(msg.body, msg.isHtml)
         .then(r => sendResponse(r))
-        .catch(e => sendResponse({ error: e.message }));
+        .catch(e => sendResponse({ error: e.message + ' DIAG: ' + diagnose() }));
       return true;
     }
     if (msg.action === 'clickSend') {
