@@ -37,6 +37,18 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
+  // React-friendly value setter for inputs
+  function setNativeValue(el, value) {
+    try {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, value);
+    } catch(e) {
+      try { el.value = value; } catch(e2) {}
+    }
+    try { el.dispatchEvent(new Event('input',  { bubbles: true })); } catch(e) {}
+    try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
+  }
+
   function findFieldByLabelText(labelText) {
     const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
     const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
@@ -66,12 +78,10 @@
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
-    try {
-      el.value = value;
-      el.dispatchEvent(new Event('input',  { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    } catch(e) {}
+    // React-friendly native setter first
+    setNativeValue(el, value);
     await sleep(100);
+    // execCommand as secondary approach
     try {
       el.focus();
       document.execCommand('selectAll', false, null);
@@ -98,13 +108,11 @@
     return null;
   }
 
-  // ── Diagnostics ──────────────────────────────────────────────────────────────────
+  // ── Diagnostics ─────────────────────────────────────────────────────────────────
   function diagnose() {
     const lines = [];
     lines.push('url: ' + window.location.href.substring(0, 80));
     lines.push('hasMailUI: ' + hasMailUI());
-
-    // iframes
     const iframes = Array.from(document.querySelectorAll('iframe'));
     lines.push('iframes: ' + iframes.length);
     iframes.slice(0, 5).forEach((fr, i) => {
@@ -115,23 +123,16 @@
           (fd ? ', designMode: ' + fd.designMode + ', CE: ' + fd.querySelectorAll('[contenteditable]').length : ''));
       } catch(e) { lines.push('iframe[' + i + '] blocked'); }
     });
-
-    // editables in this doc
     lines.push('[contenteditable]: ' + document.querySelectorAll('[contenteditable]').length);
-    lines.push('isContentEditable: ' +
-      Array.from(document.querySelectorAll('*')).filter(el => { try { return el.isContentEditable; } catch(e) { return false; } }).length);
     lines.push('designMode: ' + document.designMode);
     lines.push('body.isContentEditable: ' + document.body.isContentEditable);
-
-    // ui-button labels
     const btnLabels = Array.from(document.querySelectorAll('ui-button'))
       .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
     lines.push('ui-button labels: ' + JSON.stringify(btnLabels));
-
     return lines.join(' | ');
   }
 
-  // ── Action: composeOpen (runs in mail UI frame) ──────────────────────────────
+  // ── Action: composeOpen (runs in mail UI frame) ─────────────────────────────
   async function composeOpen(to, subject) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -139,16 +140,20 @@
 
     const card = await waitForComposeCard(5000);
     if (!card) return { error: 'Compose dialog did not open. DIAG: ' + diagnose() };
-    await sleep(800);
+    await sleep(1000);
 
-    // To field
+    // To field — try label first, then shadow inputs
     let toField = findFieldByLabelText('To');
     if (!toField) { const ac = getAutoCompleteInputs(); toField = ac[0]; }
     if (!toField) toField = Array.from(document.querySelectorAll('input'))
       .find(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
     if (!toField) return { error: 'To field not found. DIAG: ' + diagnose() };
+
     await typeInto(toField, to);
-    await sleep(300);
+    await sleep(400);
+    // Press Enter to confirm the email token, then Tab to move focus
+    pressKey(toField, 'Enter', 13);
+    await sleep(200);
     pressKey(toField, 'Tab', 9);
     await sleep(500);
 
@@ -168,7 +173,7 @@
     return { ok: true };
   }
 
-  // ── Action: fillBody (runs inside the mail2-rte iframe) ─────────────────────
+  // ── Action: fillBody (runs inside the mail2-rte iframe) ────────────────────
   async function fillBody(body, isHtml) {
     const ed = document.querySelector('[contenteditable]') ||
                (document.body.isContentEditable ? document.body : null) ||
@@ -202,11 +207,19 @@
 
     try { ed.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body })); } catch(e) {}
     await sleep(200);
+
+    // Blur the editor to commit content before send
+    try { ed.blur(); } catch(e) {}
+    await sleep(200);
+
     return { ok: true, diag: diagnose() };
   }
 
-  // ── Action: clickSend (runs in mail UI frame) ───────────────────────────────
-  function clickSend() {
+  // ── Action: clickSend (runs in mail UI frame) ─────────────────────────────
+  async function clickSend() {
+    // Wait briefly in case the RTE needs a moment to commit
+    await sleep(500);
+
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => b.getAttribute('aria-label') === 'Send Message');
     if (!sendBtn) {
@@ -214,6 +227,10 @@
         .map(b => b.getAttribute('aria-label') || '').filter(Boolean);
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) + ' DIAG: ' + diagnose() };
     }
+
+    click(sendBtn);
+    await sleep(500);
+    // Click a second time in case the first was ignored
     click(sendBtn);
     return { ok: true };
   }
@@ -240,7 +257,9 @@
       return true;
     }
     if (msg.action === 'clickSend') {
-      sendResponse(clickSend());
+      clickSend()
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
       return true;
     }
   });
