@@ -22,11 +22,15 @@
     <section class="card">
       <h2>2. Compose Newsletter</h2>
       <input type="text" id="subject" placeholder="Email subject..." />
-      <div class="row">
-        <label class="file-btn">Upload HTML File<input type="file" id="htmlFileInput" accept=".html,.htm" /></label>
-        <span id="htmlFileName" class="hint">No file loaded</span>
+
+      <div class="versions-header row">
+        <span class="hint">HTML Versions — rotate every <input type="number" id="batchSize" value="10" min="1" max="9999" /> emails</span>
+        <label class="file-btn">Add Version<input type="file" id="htmlFileInput" accept=".html,.htm" multiple /></label>
       </div>
-      <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="7"></textarea>
+      <div id="versionList"></div>
+      <p class="hint" id="versionHint">No versions loaded — you can also type plain text below.</p>
+
+      <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="5"></textarea>
       <label class="row"><input type="checkbox" id="isHtml" /><span>Send as HTML</span></label>
     </section>
 

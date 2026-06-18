@@ -1,12 +1,14 @@
 const emailListEl  = document.getElementById('emailList');
 const fileInputEl  = document.getElementById('fileInput');
 const htmlFileInputEl = document.getElementById('htmlFileInput');
-const htmlFileNameEl  = document.getElementById('htmlFileName');
+const versionListEl   = document.getElementById('versionList');
+const versionHintEl   = document.getElementById('versionHint');
 const emailCountEl = document.getElementById('emailCount');
 const subjectEl    = document.getElementById('subject');
 const bodyEl       = document.getElementById('body');
 const isHtmlEl     = document.getElementById('isHtml');
 const delayEl      = document.getElementById('delay');
+const batchSizeEl  = document.getElementById('batchSize');
 const startBtn     = document.getElementById('startBtn');
 const stopBtn      = document.getElementById('stopBtn');
 const progressCard = document.getElementById('progressCard');
@@ -14,19 +16,31 @@ const progressBar  = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
 const logEl        = document.getElementById('log');
 
+// In-memory list of { name, html } version objects
+let htmlVersions = [];
+
 // Restore saved draft
-chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails'], (data) => {
-  if (data.subject) subjectEl.value = data.subject;
-  if (data.body)    bodyEl.value    = data.body;
-  if (data.isHtml)  isHtmlEl.checked = data.isHtml;
-  if (data.delay)   delayEl.value   = data.delay;
-  if (data.emails)  { emailListEl.value = data.emails; updateCount(); }
+chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails', 'batchSize', 'htmlVersions'], (data) => {
+  if (data.subject)      subjectEl.value      = data.subject;
+  if (data.body)         bodyEl.value         = data.body;
+  if (data.isHtml)       isHtmlEl.checked     = data.isHtml;
+  if (data.delay)        delayEl.value        = data.delay;
+  if (data.batchSize)    batchSizeEl.value    = data.batchSize;
+  if (data.emails)       { emailListEl.value  = data.emails; updateCount(); }
+  if (data.htmlVersions && data.htmlVersions.length) {
+    htmlVersions = data.htmlVersions;
+    renderVersions();
+  }
 });
 
 function saveDraft() {
-  chrome.storage.local.set({ subject: subjectEl.value, body: bodyEl.value, isHtml: isHtmlEl.checked, delay: delayEl.value, emails: emailListEl.value });
+  chrome.storage.local.set({
+    subject: subjectEl.value, body: bodyEl.value, isHtml: isHtmlEl.checked,
+    delay: delayEl.value, emails: emailListEl.value, batchSize: batchSizeEl.value,
+    htmlVersions
+  });
 }
-[subjectEl, bodyEl, emailListEl, delayEl, isHtmlEl].forEach(el => el.addEventListener('change', saveDraft));
+[subjectEl, bodyEl, emailListEl, delayEl, isHtmlEl, batchSizeEl].forEach(el => el.addEventListener('change', saveDraft));
 
 function getEmails() {
   return emailListEl.value.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
@@ -50,19 +64,50 @@ fileInputEl.addEventListener('change', () => {
   reader.readAsText(file);
 });
 
-// Load HTML newsletter file
+// Add HTML version(s) — supports multi-file select
 htmlFileInputEl.addEventListener('change', () => {
-  const file = htmlFileInputEl.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    bodyEl.value = e.target.result;
-    isHtmlEl.checked = true;
-    htmlFileNameEl.textContent = file.name;
-    saveDraft();
-  };
-  reader.readAsText(file);
+  const files = Array.from(htmlFileInputEl.files);
+  if (!files.length) return;
+  let loaded = 0;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      htmlVersions.push({ name: file.name, html: e.target.result });
+      loaded++;
+      if (loaded === files.length) { renderVersions(); saveDraft(); }
+    };
+    reader.readAsText(file);
+  });
+  htmlFileInputEl.value = '';
 });
+
+function renderVersions() {
+  versionListEl.innerHTML = '';
+  if (!htmlVersions.length) {
+    versionHintEl.style.display = '';
+    return;
+  }
+  versionHintEl.style.display = 'none';
+  htmlVersions.forEach((v, i) => {
+    const row = document.createElement('div');
+    row.className = 'version-row row';
+    row.innerHTML =
+      '<span class="version-badge">v' + (i + 1) + '</span>' +
+      '<span class="version-name">' + escHtml(v.name) + '</span>' +
+      '<button class="version-remove" data-i="' + i + '">&#x2715;</button>';
+    versionListEl.appendChild(row);
+  });
+  versionListEl.querySelectorAll('.version-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      htmlVersions.splice(Number(btn.dataset.i), 1);
+      renderVersions(); saveDraft();
+    });
+  });
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 function addLog(msg, type) {
   type = type || 'info';
@@ -88,19 +133,27 @@ function setUI(sending) {
 }
 
 async function startSending() {
-  const emails  = getEmails();
-  const subject = subjectEl.value.trim();
-  const body    = bodyEl.value.trim();
-  const isHtml  = isHtmlEl.checked;
-  const delay   = Math.max(1, parseInt(delayEl.value, 10) || 5);
+  const emails    = getEmails();
+  const subject   = subjectEl.value.trim();
+  const body      = bodyEl.value.trim();
+  const isHtml    = isHtmlEl.checked;
+  const delay     = Math.max(1, parseInt(delayEl.value, 10) || 5);
+  const batchSize = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
+
   if (!emails.length) { alert('Please enter at least one email address.'); return; }
   if (!subject)       { alert('Please enter a subject.'); return; }
-  if (!body)          { alert('Please enter a message body or upload an HTML file.'); return; }
+
+  // Use uploaded versions if available, else fall back to textarea body
+  const bodies = htmlVersions.length ? htmlVersions.map(v => v.html) : [body];
+  const useHtml = htmlVersions.length > 0 ? true : isHtml;
+
+  if (!bodies[0]) { alert('Please enter a message body or upload at least one HTML file.'); return; }
+
   isSending = true;
   logEl.innerHTML = '';
   progressCard.style.display = 'flex';
   setUI(true);
-  chrome.runtime.sendMessage({ action: 'startSending', emails, subject, body, isHtml, delay });
+  chrome.runtime.sendMessage({ action: 'startSending', emails, subject, bodies, isHtml: useHtml, delay, batchSize });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {

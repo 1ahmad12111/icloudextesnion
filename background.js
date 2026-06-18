@@ -42,8 +42,9 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subject, body, isHtml, delay }) {
+async function runSendLoop({ emails, subject, bodies, isHtml, delay, batchSize }) {
   const total = emails.length;
+  batchSize = batchSize || 10;
   let sent = 0;
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
@@ -107,7 +108,10 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
 
-      // Step 5: Fill body
+      // Step 5: Fill body — rotate version every batchSize emails
+      const versionIndex = Math.floor(sent / batchSize) % bodies.length;
+      const body = bodies[versionIndex];
+      broadcast({ type: 'log', text: 'Using version ' + (versionIndex + 1) + ' of ' + bodies.length + '.', level: 'info' });
       const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body, isHtml });
       if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
       broadcast({ type: 'log', text: 'Body filled.', level: 'info' });

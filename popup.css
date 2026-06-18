@@ -29,3 +29,11 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .log-ok { background: #e9f7ef; color: #1a7a4a; }
 .log-err { background: #fdecea; color: #c0392b; }
 .log-info { background: #eaf3ff; color: #0071e3; }
+.versions-header { flex-wrap: wrap; gap: 6px; align-items: center; }
+.versions-header .hint { flex: 1; }
+.versions-header input[type=number] { width: 56px; display: inline; padding: 3px 6px; }
+.version-row { justify-content: flex-start; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; }
+.version-badge { background: #0071e3; color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.version-name { flex: 1; font-size: 12px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.version-remove { flex-shrink: 0; background: none; border: none; color: #999; cursor: pointer; font-size: 13px; padding: 0 4px; flex: 0; }
+.version-remove:hover { color: #ff3b30; }
