@@ -36,6 +36,14 @@ async function sendDebuggerEnter(tabId) {
   await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
 }
 
+async function sendDebuggerTab(tabId) {
+  const base = { modifiers: 0, key: 'Tab', code: 'Tab', keyCode: 9,
+    nativeVirtualKeyCode: 9, autoRepeat: false, isKeypad: false, isSystemKey: false };
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
+  await sleep(60);
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 async function runSendLoop({ emails, subject, body, isHtml, delay }) {
@@ -82,16 +90,17 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
       broadcast({ type: 'log', text: 'Compose open, To typed.', level: 'info' });
 
-      // Step 2: Fire trusted Enter via debugger to confirm the email token.
-      // Fire quickly (50ms) while the To input still has focus, then retry after 400ms.
+      // Step 2: Fire trusted Enter then Tab to confirm the To token.
+      // Enter attempts token confirmation; Tab triggers blur which also confirms it
+      // and moves focus to Subject (makes fillSubject more reliable).
       await sleep(50);
       await sendDebuggerEnter(mailTabId);
-      await sleep(400);
-      await sendDebuggerEnter(mailTabId); // second attempt in case focus shifted
-      broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
+      await sleep(300);
+      await sendDebuggerTab(mailTabId);
+      broadcast({ type: 'log', text: 'Enter+Tab sent — To token confirmed, focus on Subject.', level: 'info' });
 
       // Step 3: Fill Subject
-      await sleep(600);
+      await sleep(500);
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
