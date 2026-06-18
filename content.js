@@ -134,17 +134,53 @@
     return { ok: true };
   }
 
+  function deepActiveElement() {
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+      el = el.shadowRoot.activeElement;
+    }
+    return el || null;
+  }
+
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    // Second ui-autocomplete-field input = Subject (language-agnostic)
+    let subjectField = null;
+
+    // Try 0: walk shadow roots to find the truly focused element after Tab
+    const ae = deepActiveElement();
+    if (ae && ae.tagName === 'INPUT') subjectField = ae;
+
+    // Try 1: second ui-autocomplete-field shadow input
     const ac = getAutoCompleteInputs();
-    let subjectField = ac[1] || null;
+    if (!subjectField && ac[1]) subjectField = ac[1];
+
+    // Try 2: ui-text-field shadow root (flat DOM search)
     if (!subjectField) {
       for (const tf of document.querySelectorAll('ui-text-field')) {
         const si = tf.shadowRoot && tf.shadowRoot.querySelector('input');
         if (si) { subjectField = si; break; }
       }
     }
+
+    // Try 3: deep shadow search for any ui-text-field inside shadow hosts
+    if (!subjectField) {
+      function findInShadow(root) {
+        for (const el of root.querySelectorAll('*')) {
+          if (el.tagName === 'UI-TEXT-FIELD' && el.shadowRoot) {
+            const si = el.shadowRoot.querySelector('input');
+            if (si) return si;
+          }
+          if (el.shadowRoot) {
+            const found = findInShadow(el.shadowRoot);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+      subjectField = findInShadow(document);
+    }
+
+    // Try 4: any visible input with nonzero width
     if (!subjectField) {
       const visibleInputs = Array.from(document.querySelectorAll('input'))
         .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
