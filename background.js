@@ -211,11 +211,17 @@ function sleep(ms) {
 }
 
 async function getOrOpenMailTab() {
-  const tabs = await chrome.tabs.query({ url: 'https://www.icloud.com/mail/*' });
-  if (tabs.length > 0) {
-    await chrome.tabs.update(tabs[0].id, { active: true });
-    return tabs[0].id;
+  // iCloud Mail redirects /mail/ → /applications/mail2/... so query broadly
+  const allTabs = await chrome.tabs.query({ url: 'https://www.icloud.com/*' });
+  const mailTab = allTabs.find(t => t.url && (
+    t.url.includes('/mail') || t.url.includes('mail2')
+  ));
+  if (mailTab) {
+    broadcast({ type: 'log', text: 'Found iCloud Mail tab (id ' + mailTab.id + ').', level: 'info' });
+    await chrome.tabs.update(mailTab.id, { active: true });
+    return mailTab.id;
   }
+  broadcast({ type: 'log', text: 'No iCloud Mail tab found — opening one...', level: 'info' });
   const tab = await chrome.tabs.create({ url: 'https://www.icloud.com/mail/' });
   await sleep(6000);
   return tab.id;
