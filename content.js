@@ -140,6 +140,12 @@
     const ac = getAutoCompleteInputs();
     let subjectField = ac[1] || null;
     if (!subjectField) {
+      for (const tf of document.querySelectorAll('ui-text-field')) {
+        const si = tf.shadowRoot && tf.shadowRoot.querySelector('input');
+        if (si) { subjectField = si; break; }
+      }
+    }
+    if (!subjectField) {
       const visibleInputs = Array.from(document.querySelectorAll('input'))
         .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
       subjectField = visibleInputs[1] || visibleInputs[0] || null;
