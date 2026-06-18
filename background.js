@@ -108,14 +108,11 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       await sendDebuggerTab(mailTabId);   // Cc/Bcc → Subject
       broadcast({ type: 'log', text: 'To token confirmed, focus on Subject.', level: 'info' });
 
-      // Step 4: Focus Subject via content.js as backup (ensures correct field is focused)
+      // Step 4: Fill subject via content.js (native value setter, no debugger typing needed)
       await sleep(300);
-      await sendToFrame(mailFrameId, { action: 'focusSubject' });
-
-      // Step 5: Type subject via debugger
-      await sleep(300);
-      await sendDebuggerType(mailTabId, subject);
-      broadcast({ type: 'log', text: 'Subject typed via debugger.', level: 'info' });
+      const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
+      if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
+      broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
       // Step 6: Find RTE iframe
       const rteFrameId = await findRteFrame(4000);

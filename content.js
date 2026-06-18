@@ -179,9 +179,42 @@
     return arr;
   }
 
-  // ── Action: fillSubject — kept for compat but typing now done via debugger ──
+  // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    return await focusSubject();
+    // Try 1: second ui-autocomplete-field shadow input
+    const ac = getAutoCompleteInputs();
+    let subjectField = ac[1] || null;
+
+    // Try 2: walk all shadow roots for all visible inputs; second one is Subject
+    if (!subjectField) {
+      const allInputs = getAllShadowInputs(document).filter(i => {
+        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
+      });
+      if (allInputs.length >= 2) subjectField = allInputs[1];
+      else if (allInputs.length === 1) subjectField = allInputs[0];
+    }
+
+    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
+
+    // Click the host element to give browser focus
+    const host = subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField;
+    try { click(host); } catch(e) {}
+    await sleep(200);
+    try { subjectField.focus(); } catch(e) {}
+    await sleep(100);
+
+    // Use native value setter (bypasses React/framework controlled input)
+    try {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(subjectField, subject);
+    } catch(e) {
+      try { subjectField.value = subject; } catch(e2) {}
+    }
+    try { subjectField.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: subject })); } catch(e) {}
+    try { subjectField.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
+    await sleep(200);
+
+    return { ok: true };
   }
 
   // ── Action: fillBody (runs in mail2-rte iframe) ──────────────────────────
