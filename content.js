@@ -40,6 +40,33 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
+  // Finds a field by its visible label text (e.g. "To", "Subject")
+  function findFieldByLabelText(labelText) {
+    const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
+    const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
+      .filter(el => re.test((el.textContent || '').trim()));
+    for (const label of labels) {
+      const id = label.id;
+      if (id) {
+        const inp = document.querySelector('[aria-labelledby="' + id + '"]');
+        if (inp) return inp;
+        for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
+          if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
+          if (cel.shadowRoot) {
+            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
+            if (si) return si;
+          }
+        }
+      }
+      const parent = label.closest('[class*="field"], [class*="row"], li, div') || label.parentElement;
+      if (parent) {
+        const si = parent.querySelector('input, [contenteditable], ui-autocomplete-field');
+        if (si && si !== label) return si;
+      }
+    }
+    return null;
+  }
+
   async function typeInto(el, value) {
     try { el.focus(); } catch(e) {}
     await sleep(100);
@@ -54,12 +81,11 @@
     } catch(e) {}
   }
 
+  // ── 5-strategy compose button finder (from current branch) ──────────────────
   function findComposeBtn() {
-    // Strategy 1: known XPath (desktop en-us layout)
     const byXpath = xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
     if (byXpath) return byXpath;
 
-    // Strategy 2: aria-label in many languages
     const COMPOSE_LABELS = ['compose', 'new message', 'new mail', '新規メッセージを作成', '作成',
       'nouveau message', 'verfassen', 'redactar', '新建', '撰写', 'scrivi', 'nieuw bericht'];
     const byLabel = Array.from(document.querySelectorAll('ui-button, button, [role="button"]'))
@@ -69,17 +95,14 @@
       });
     if (byLabel) return byLabel;
 
-    // Strategy 3: visible text "New Message" or "Compose"
     const byText = Array.from(document.querySelectorAll('ui-button, button, [role="button"], a'))
       .find(el => /new\s*message|compose/i.test((el.textContent || '').trim()));
     if (byText) return byText;
 
-    // Strategy 4: first ui-button in app-body containing an SVG (pencil/compose icon)
     const byIcon = Array.from(document.querySelectorAll('#app-body ui-button'))
       .find(b => b.querySelector('svg') || (b.shadowRoot && b.shadowRoot.querySelector('svg')));
     if (byIcon) return byIcon;
 
-    // Strategy 5: positional fallback — 3rd ui-button in app-body
     return Array.from(document.querySelectorAll('#app-body ui-button'))[2] || null;
   }
 
@@ -103,12 +126,14 @@
   }
 
   // ── Action: openCompose ─────────────────────────────────────────────────────
-  // Just opens compose and focuses the To field — typing is done via debugger Input.insertText
-  async function openCompose() {
+  // Compose button: 5-strategy from current branch
+  // To field typing: from uploaded version
+  async function openCompose(to) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
     click(composeBtn);
 
+    // Poll for ui-autocomplete-field inputs to appear (compose dialog opened)
     let toField = null;
     const deadline = Date.now() + 6000;
     while (Date.now() < deadline) {
@@ -116,104 +141,39 @@
       if (inputs.length > 0) { toField = inputs[0]; break; }
       await sleep(200);
     }
-
     if (!toField) return { error: 'To field never appeared after compose. DIAG: ' + diagnose() };
 
-    // Click and focus — debugger Input.insertText will type into the focused element
+    await sleep(800);
+
+    // Try label-based finder first, fall back to autocomplete input
+    const labelField = findFieldByLabelText('To');
+    if (labelField) toField = shadowInput(labelField) || labelField;
+
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
-    await sleep(150);
+    await sleep(200);
+
+    await typeInto(toField, to);
+    await sleep(300);
+
     try { toField.focus(); } catch(e) {}
     await sleep(100);
 
     return { ok: true };
   }
 
-  // ── Action: focusSubject ────────────────────────────────────────────────────
-  // Finds the Subject field, clicks it to give it focus, returns ok/error
-  async function focusSubject() {
-    // Try 1: second ui-autocomplete-field shadow input
-    const ac = getAutoCompleteInputs();
-    let subjectField = ac[1] || null;
-
-    // Try 2: walk all shadow roots for all visible inputs; second one is Subject
-    if (!subjectField) {
-      const allInputs = getAllShadowInputs(document).filter(i => {
-        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
-      });
-      if (allInputs.length >= 2) subjectField = allInputs[1];
-      else if (allInputs.length === 1) subjectField = allInputs[0];
-    }
-
-    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
-
-    const host = subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField;
-    try { click(host); } catch(e) {}
-    await sleep(100);
-    try { subjectField.focus(); } catch(e) {}
-    await sleep(50);
-    // Select all existing content so Insert.insertText replaces it cleanly
-    try { subjectField.select(); } catch(e) {}
-    await sleep(50);
-
-    return { ok: true };
-  }
-
-  function deepActiveElement() {
-    let el = document.activeElement;
-    while (el && el.shadowRoot && el.shadowRoot.activeElement) {
-      el = el.shadowRoot.activeElement;
-    }
-    return el || null;
-  }
-
-  // Collect every <input> reachable by walking all shadow roots recursively
-  function getAllShadowInputs(root, arr) {
-    arr = arr || [];
-    try {
-      const nodes = root.querySelectorAll('*');
-      for (const el of nodes) {
-        if (el.tagName === 'INPUT') arr.push(el);
-        if (el.shadowRoot) getAllShadowInputs(el.shadowRoot, arr);
-      }
-    } catch(e) {}
-    return arr;
-  }
-
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
-    // Try 1: second ui-autocomplete-field shadow input
-    const ac = getAutoCompleteInputs();
-    let subjectField = ac[1] || null;
-
-    // Try 2: walk all shadow roots for all visible inputs; second one is Subject
+    let subjectField = findFieldByLabelText('Subject');
+    if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
     if (!subjectField) {
-      const allInputs = getAllShadowInputs(document).filter(i => {
-        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
-      });
-      if (allInputs.length >= 2) subjectField = allInputs[1];
-      else if (allInputs.length === 1) subjectField = allInputs[0];
+      subjectField = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
     }
-
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
-
-    // Click the host element to give browser focus
-    const host = subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField;
-    try { click(host); } catch(e) {}
-    await sleep(200);
-    try { subjectField.focus(); } catch(e) {}
-    await sleep(100);
-
-    // Use native value setter (bypasses React/framework controlled input)
-    try {
-      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-      nativeSetter.call(subjectField, subject);
-    } catch(e) {
-      try { subjectField.value = subject; } catch(e2) {}
-    }
-    try { subjectField.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: subject })); } catch(e) {}
-    try { subjectField.dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
-    await sleep(200);
-
+    await typeInto(subjectField, subject);
+    await sleep(300);
+    try { subjectField.blur(); } catch(e) {}
+    await sleep(500);
     return { ok: true };
   }
 
@@ -256,7 +216,6 @@
   async function clickSend() {
     await sleep(600);
 
-    // Match send button in any language
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => {
         const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -295,7 +254,7 @@
       await sleep(300);
     }
 
-    // Detect "invalid email address" dialog — report as error so extension doesn't log false success
+    // Detect "invalid email address" dialog
     const invalidEmailDialog = Array.from(document.querySelectorAll('button'))
       .find(b => /^ok$/i.test((b.textContent || '').trim()));
     const dialogText = document.body.innerText || '';
@@ -317,13 +276,7 @@
       return true;
     }
     if (msg.action === 'openCompose') {
-      openCompose()
-        .then(r => sendResponse(r))
-        .catch(e => sendResponse({ error: e.message }));
-      return true;
-    }
-    if (msg.action === 'focusSubject') {
-      focusSubject()
+      openCompose(msg.to)
         .then(r => sendResponse(r))
         .catch(e => sendResponse({ error: e.message }));
       return true;
