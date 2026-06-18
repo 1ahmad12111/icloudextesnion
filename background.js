@@ -99,21 +99,17 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       await sendDebuggerType(mailTabId, email);
       broadcast({ type: 'log', text: 'To address typed via debugger.', level: 'info' });
 
-      // Step 3: Confirm To token with Enter
+      // Step 3: Confirm To token with Enter, then Tab×2 to reach Subject (To→Cc/Bcc→Subject)
       await sleep(300);
       await sendDebuggerEnter(mailTabId);
       await sleep(300);
-      await sendDebuggerEnter(mailTabId); // retry
-      broadcast({ type: 'log', text: 'To token confirmed.', level: 'info' });
+      await sendDebuggerTab(mailTabId);   // To → Cc/Bcc
+      await sleep(150);
+      await sendDebuggerTab(mailTabId);   // Cc/Bcc → Subject
+      broadcast({ type: 'log', text: 'To token confirmed, focus on Subject.', level: 'info' });
 
-      // Step 4: Focus Subject field
-      await sleep(400);
-      const focusSubjResult = await sendToFrame(mailFrameId, { action: 'focusSubject' });
-      if (focusSubjResult && focusSubjResult.error) throw new Error(focusSubjResult.error);
-      broadcast({ type: 'log', text: 'Subject field focused.', level: 'info' });
-
-      // Step 5: Type subject via debugger
-      await sleep(100);
+      // Step 4: Type subject via debugger (focus is now on Subject)
+      await sleep(150);
       await sendDebuggerType(mailTabId, subject);
       broadcast({ type: 'log', text: 'Subject typed via debugger.', level: 'info' });
 

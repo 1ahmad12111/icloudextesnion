@@ -248,7 +248,15 @@
     } catch(e) {}
 
     click(sendBtn);
-    await sleep(300);
+    await sleep(500);
+
+    // Handle "no subject" confirmation dialog if it appears
+    const sendAnywayBtn = Array.from(document.querySelectorAll('button, ui-button'))
+      .find(b => /send anyway/i.test((b.textContent || b.getAttribute('aria-label') || '')));
+    if (sendAnywayBtn) {
+      click(sendAnywayBtn);
+      await sleep(300);
+    }
 
     return { ok: true };
   }
