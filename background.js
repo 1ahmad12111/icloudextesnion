@@ -28,6 +28,10 @@ async function detachDebugger() {
   debuggerAttached = false;
 }
 
+async function sendDebuggerType(tabId, text) {
+  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+}
+
 async function sendDebuggerEnter(tabId) {
   const base = { modifiers: 0, key: 'Enter', code: 'Enter', keyCode: 13,
     nativeVirtualKeyCode: 13, autoRepeat: false, isKeypad: false, isSystemKey: false };
@@ -77,13 +81,18 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      // Step 1: Open compose and type To address
+      // Step 1: Open compose and focus To field
       const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: email });
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
-      broadcast({ type: 'log', text: 'Compose open, To typed.', level: 'info' });
+      broadcast({ type: 'log', text: 'Compose open, To focused.', level: 'info' });
 
-      // Step 2: Fire trusted Enter via debugger to confirm the email token
-      await sleep(200);
+      // Step 2: Type email via debugger (trusted, works with iCloud controlled inputs)
+      await sleep(100);
+      await sendDebuggerType(mailTabId, email);
+      broadcast({ type: 'log', text: 'To address typed.', level: 'info' });
+
+      // Step 3: Fire trusted Enter to confirm the email token
+      await sleep(300);
       await sendDebuggerEnter(mailTabId);
       broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
 

@@ -127,7 +127,7 @@
 
   // ── Action: openCompose ─────────────────────────────────────────────────────
   // Compose button: 5-strategy from current branch
-  // To field typing: from uploaded version
+  // To field: just focus it — background.js types via debugger Input.insertText
   async function openCompose(to) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
@@ -151,10 +151,6 @@
 
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
     await sleep(200);
-
-    await typeInto(toField, to);
-    await sleep(300);
-
     try { toField.focus(); } catch(e) {}
     await sleep(100);
 
