@@ -52,7 +52,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   if (subjects.length > 1)
     broadcast({ type: 'log', text: subjects.length + ' subject lines loaded — will rotate every batch.', level: 'info' });
   if (randomize)
-    broadcast({ type: 'log', text: 'HTML randomizer ON (entity rate ' + Math.round(entityRate * 100) + '%).', level: 'info' });
+    broadcast({ type: 'log', text: 'HTML randomizer ON — structural mutations per email.', level: 'info' });
 
   let sent = 0;
 
