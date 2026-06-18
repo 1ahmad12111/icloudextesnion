@@ -187,6 +187,9 @@
       subjectField = visibleInputs[1] || visibleInputs[0] || null;
     }
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
+    // Click subject field — also triggers blur on To field which confirms the token
+    try { click(subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField); } catch(e) {}
+    await sleep(200);
     await typeInto(subjectField, subject);
     await sleep(300);
     try { subjectField.blur(); } catch(e) {}
