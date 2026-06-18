@@ -1,3 +1,5 @@
+importScripts('randomizer.js');
+
 let stopRequested = false;
 let mailTabId = null;
 let debuggerAttached = false;
@@ -42,12 +44,18 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subject, bodies, isHtml, delay, batchSize }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityRate }) {
   const total = emails.length;
   batchSize = batchSize || 10;
-  let sent = 0;
+  if (typeof entityRate !== 'number') entityRate = 0.4;
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
+  if (subjects.length > 1)
+    broadcast({ type: 'log', text: subjects.length + ' subject lines loaded — will rotate every batch.', level: 'info' });
+  if (randomize)
+    broadcast({ type: 'log', text: 'HTML randomizer ON (entity rate ' + Math.round(entityRate * 100) + '%).', level: 'info' });
+
+  let sent = 0;
 
   mailTabId = await getOrOpenMailTab();
 
@@ -82,6 +90,24 @@ async function runSendLoop({ emails, subject, bodies, isHtml, delay, batchSize }
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
+      // Rotate subject: same index logic as body version rotation
+      const subjectIndex = Math.floor(sent / batchSize) % subjects.length;
+      const subject = subjects[subjectIndex];
+      if (subjects.length > 1)
+        broadcast({ type: 'log', text: 'Subject #' + (subjectIndex + 1) + ': "' + subject + '"', level: 'info' });
+
+      // Rotate HTML version
+      const versionIndex = Math.floor(sent / batchSize) % bodies.length;
+      let body = bodies[versionIndex];
+      if (bodies.length > 1)
+        broadcast({ type: 'log', text: 'HTML version ' + (versionIndex + 1) + ' of ' + bodies.length + '.', level: 'info' });
+
+      // Randomize HTML fingerprint for this specific email
+      if (randomize && isHtml) {
+        body = randomizeHtml(body, entityRate);
+        broadcast({ type: 'log', text: 'HTML randomized.', level: 'info' });
+      }
+
       // Step 1: Open compose and focus To field
       const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: email });
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
@@ -95,30 +121,27 @@ async function runSendLoop({ emails, subject, bodies, isHtml, delay, batchSize }
       // Step 3: Fire trusted Enter to confirm the email token
       await sleep(300);
       await sendDebuggerEnter(mailTabId);
-      broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
+      broadcast({ type: 'log', text: 'Token confirmed.', level: 'info' });
 
-      // Step 3: Fill Subject
+      // Step 4: Fill Subject
       await sleep(800);
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
-      // Step 4: Find RTE iframe
+      // Step 5: Find RTE iframe
       const rteFrameId = await findRteFrame(4000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
 
-      // Step 5: Fill body — rotate version every batchSize emails
-      const versionIndex = Math.floor(sent / batchSize) % bodies.length;
-      const body = bodies[versionIndex];
-      broadcast({ type: 'log', text: 'Using version ' + (versionIndex + 1) + ' of ' + bodies.length + '.', level: 'info' });
+      // Step 6: Fill body
       const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body, isHtml });
       if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
       broadcast({ type: 'log', text: 'Body filled.', level: 'info' });
 
       await sleep(500);
 
-      // Step 6: Click Send
+      // Step 7: Click Send
       const sendResult = await sendToFrame(mailFrameId, { action: 'clickSend' });
       if (sendResult && sendResult.error) throw new Error(sendResult.error);
 
@@ -138,6 +161,8 @@ async function runSendLoop({ emails, subject, bodies, isHtml, delay, batchSize }
   await detachDebugger();
   broadcast({ type: 'done', sent, total });
 }
+
+// ── Frame helpers ─────────────────────────────────────────────────────────────
 
 async function findMailFrame() {
   const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => null);

@@ -1,32 +1,44 @@
-const emailListEl  = document.getElementById('emailList');
-const fileInputEl  = document.getElementById('fileInput');
+const emailListEl    = document.getElementById('emailList');
+const fileInputEl    = document.getElementById('fileInput');
 const htmlFileInputEl = document.getElementById('htmlFileInput');
-const versionListEl   = document.getElementById('versionList');
-const versionHintEl   = document.getElementById('versionHint');
-const emailCountEl = document.getElementById('emailCount');
-const subjectEl    = document.getElementById('subject');
-const bodyEl       = document.getElementById('body');
-const isHtmlEl     = document.getElementById('isHtml');
-const delayEl      = document.getElementById('delay');
-const batchSizeEl  = document.getElementById('batchSize');
-const startBtn     = document.getElementById('startBtn');
-const stopBtn      = document.getElementById('stopBtn');
-const progressCard = document.getElementById('progressCard');
-const progressBar  = document.getElementById('progressBar');
-const progressText = document.getElementById('progressText');
-const logEl        = document.getElementById('log');
+const versionListEl  = document.getElementById('versionList');
+const versionHintEl  = document.getElementById('versionHint');
+const emailCountEl   = document.getElementById('emailCount');
+const subjectListEl  = document.getElementById('subjectList');
+const bodyEl         = document.getElementById('body');
+const isHtmlEl       = document.getElementById('isHtml');
+const delayEl        = document.getElementById('delay');
+const batchSizeEl    = document.getElementById('batchSize');
+const randomizeEl    = document.getElementById('randomizeHtml');
+const entityRateEl   = document.getElementById('entityRate');
+const entityRateValEl = document.getElementById('entityRateVal');
+const entityRateRowEl = document.getElementById('entityRateRow');
+const startBtn       = document.getElementById('startBtn');
+const stopBtn        = document.getElementById('stopBtn');
+const progressCard   = document.getElementById('progressCard');
+const progressBar    = document.getElementById('progressBar');
+const progressText   = document.getElementById('progressText');
+const logEl          = document.getElementById('log');
 
-// In-memory list of { name, html } version objects
 let htmlVersions = [];
 
-// Restore saved draft
-chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails', 'batchSize', 'htmlVersions'], (data) => {
-  if (data.subject)      subjectEl.value      = data.subject;
-  if (data.body)         bodyEl.value         = data.body;
-  if (data.isHtml)       isHtmlEl.checked     = data.isHtml;
-  if (data.delay)        delayEl.value        = data.delay;
-  if (data.batchSize)    batchSizeEl.value    = data.batchSize;
-  if (data.emails)       { emailListEl.value  = data.emails; updateCount(); }
+// ── Restore saved draft ───────────────────────────────────────────────────────
+
+chrome.storage.local.get([
+  'subjectList', 'body', 'isHtml', 'delay', 'emails',
+  'batchSize', 'htmlVersions', 'randomizeHtml', 'entityRate'
+], (data) => {
+  if (data.subjectList)   subjectListEl.value  = data.subjectList;
+  if (data.body)          bodyEl.value         = data.body;
+  if (data.isHtml)        isHtmlEl.checked     = data.isHtml;
+  if (data.delay)         delayEl.value        = data.delay;
+  if (data.batchSize)     batchSizeEl.value    = data.batchSize;
+  if (data.emails)        { emailListEl.value  = data.emails; updateCount(); }
+  if (data.randomizeHtml) { randomizeEl.checked = data.randomizeHtml; toggleEntityRate(); }
+  if (data.entityRate != null) {
+    entityRateEl.value = data.entityRate;
+    entityRateValEl.textContent = data.entityRate + '%';
+  }
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -35,12 +47,34 @@ chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails', 'batch
 
 function saveDraft() {
   chrome.storage.local.set({
-    subject: subjectEl.value, body: bodyEl.value, isHtml: isHtmlEl.checked,
-    delay: delayEl.value, emails: emailListEl.value, batchSize: batchSizeEl.value,
-    htmlVersions
+    subjectList: subjectListEl.value,
+    body: bodyEl.value,
+    isHtml: isHtmlEl.checked,
+    delay: delayEl.value,
+    emails: emailListEl.value,
+    batchSize: batchSizeEl.value,
+    htmlVersions,
+    randomizeHtml: randomizeEl.checked,
+    entityRate: Number(entityRateEl.value)
   });
 }
-[subjectEl, bodyEl, emailListEl, delayEl, isHtmlEl, batchSizeEl].forEach(el => el.addEventListener('change', saveDraft));
+
+[subjectListEl, bodyEl, emailListEl, delayEl, isHtmlEl, batchSizeEl].forEach(el =>
+  el.addEventListener('change', saveDraft)
+);
+randomizeEl.addEventListener('change', () => { toggleEntityRate(); saveDraft(); });
+entityRateEl.addEventListener('input', () => {
+  entityRateValEl.textContent = entityRateEl.value + '%';
+  saveDraft();
+});
+
+// ── Randomizer toggle ─────────────────────────────────────────────────────────
+
+function toggleEntityRate() {
+  entityRateRowEl.style.display = randomizeEl.checked ? '' : 'none';
+}
+
+// ── Email list helpers ────────────────────────────────────────────────────────
 
 function getEmails() {
   return emailListEl.value.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
@@ -51,7 +85,12 @@ function updateCount() {
 }
 emailListEl.addEventListener('input', updateCount);
 
-// Load email list from CSV/TXT
+function getSubjects() {
+  return subjectListEl.value.split(/\n/).map(s => s.trim()).filter(Boolean);
+}
+
+// ── File loaders ──────────────────────────────────────────────────────────────
+
 fileInputEl.addEventListener('change', () => {
   const file = fileInputEl.files[0];
   if (!file) return;
@@ -64,7 +103,6 @@ fileInputEl.addEventListener('change', () => {
   reader.readAsText(file);
 });
 
-// Add HTML version(s) — supports multi-file select
 htmlFileInputEl.addEventListener('change', () => {
   const files = Array.from(htmlFileInputEl.files);
   if (!files.length) return;
@@ -80,6 +118,8 @@ htmlFileInputEl.addEventListener('change', () => {
   });
   htmlFileInputEl.value = '';
 });
+
+// ── Version list UI ───────────────────────────────────────────────────────────
 
 function renderVersions() {
   versionListEl.innerHTML = '';
@@ -106,8 +146,10 @@ function renderVersions() {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// ── Log ───────────────────────────────────────────────────────────────────────
 
 function addLog(msg, type) {
   type = type || 'info';
@@ -116,6 +158,8 @@ function addLog(msg, type) {
   el.textContent = msg;
   logEl.prepend(el);
 }
+
+// ── Send flow ─────────────────────────────────────────────────────────────────
 
 let isSending = false;
 startBtn.addEventListener('click', startSending);
@@ -134,16 +178,17 @@ function setUI(sending) {
 
 async function startSending() {
   const emails    = getEmails();
-  const subject   = subjectEl.value.trim();
+  const subjects  = getSubjects();
   const body      = bodyEl.value.trim();
   const isHtml    = isHtmlEl.checked;
   const delay     = Math.max(1, parseInt(delayEl.value, 10) || 5);
   const batchSize = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
+  const randomize = randomizeEl.checked;
+  const entityRate = Number(entityRateEl.value) / 100;
 
-  if (!emails.length) { alert('Please enter at least one email address.'); return; }
-  if (!subject)       { alert('Please enter a subject.'); return; }
+  if (!emails.length)   { alert('Please enter at least one email address.'); return; }
+  if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
 
-  // Use uploaded versions if available, else fall back to textarea body
   const bodies = htmlVersions.length ? htmlVersions.map(v => v.html) : [body];
   const useHtml = htmlVersions.length > 0 ? true : isHtml;
 
@@ -153,8 +198,16 @@ async function startSending() {
   logEl.innerHTML = '';
   progressCard.style.display = 'flex';
   setUI(true);
-  chrome.runtime.sendMessage({ action: 'startSending', emails, subject, bodies, isHtml: useHtml, delay, batchSize });
+
+  chrome.runtime.sendMessage({
+    action: 'startSending',
+    emails, subjects, bodies,
+    isHtml: useHtml, delay, batchSize,
+    randomize, entityRate
+  });
 }
+
+// ── Runtime messages ──────────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'progress') {

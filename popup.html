@@ -21,7 +21,9 @@
 
     <section class="card">
       <h2>2. Compose Newsletter</h2>
-      <input type="text" id="subject" placeholder="Email subject..." />
+
+      <div class="field-label">Subject Lines <span class="hint">(one per line — rotated every batch)</span></div>
+      <textarea id="subjectList" placeholder="Your newsletter subject&#10;Another subject variation&#10;A third option..." rows="3"></textarea>
 
       <div class="versions-header row">
         <span class="hint">HTML Versions — rotate every <input type="number" id="batchSize" value="10" min="1" max="9999" /> emails</span>
@@ -37,6 +39,20 @@
     <section class="card">
       <h2>3. Settings</h2>
       <label>Delay between emails (seconds)<input type="number" id="delay" value="5" min="1" max="60" /></label>
+
+      <div class="randomizer-row">
+        <label class="toggle-label">
+          <input type="checkbox" id="randomizeHtml" />
+          <span>Randomize HTML per email</span>
+          <span class="hint">&nbsp;— unique fingerprint every send</span>
+        </label>
+        <div id="entityRateRow" class="entity-rate-row" style="display:none">
+          <span class="hint">Entity rate:</span>
+          <input type="range" id="entityRate" min="0" max="100" step="5" value="40" />
+          <span id="entityRateVal" class="badge">40%</span>
+          <span class="hint rate-labels"><span>subtle</span><span>aggressive</span></span>
+        </div>
+      </div>
     </section>
 
     <div class="controls">

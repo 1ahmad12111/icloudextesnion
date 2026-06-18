@@ -37,3 +37,10 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .version-name { flex: 1; font-size: 12px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .version-remove { flex-shrink: 0; background: none; border: none; color: #999; cursor: pointer; font-size: 13px; padding: 0 4px; flex: 0; }
 .version-remove:hover { color: #ff3b30; }
+.field-label { font-size: 12px; font-weight: 500; color: #333; margin-bottom: 2px; }
+.field-label .hint { font-weight: 400; }
+.randomizer-row { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 2px; border-top: 1px solid #f0f0f0; }
+.toggle-label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; flex-wrap: wrap; }
+.entity-rate-row { display: flex; align-items: center; gap: 8px; padding-left: 20px; flex-wrap: wrap; }
+.entity-rate-row input[type=range] { flex: 1; min-width: 80px; accent-color: #0071e3; cursor: pointer; }
+.rate-labels { display: flex; justify-content: space-between; width: 100%; font-size: 10px; color: #aaa; }
