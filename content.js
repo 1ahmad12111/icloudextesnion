@@ -146,10 +146,14 @@
 
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
 
-    try { click(subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField); } catch(e) {}
-    await sleep(150);
-    try { subjectField.focus(); } catch(e) {}
+    const host = subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField;
+    try { click(host); } catch(e) {}
     await sleep(100);
+    try { subjectField.focus(); } catch(e) {}
+    await sleep(50);
+    // Select all existing content so Insert.insertText replaces it cleanly
+    try { subjectField.select(); } catch(e) {}
+    await sleep(50);
 
     return { ok: true };
   }
