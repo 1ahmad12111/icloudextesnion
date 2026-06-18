@@ -12,6 +12,19 @@ function _encodeAsEntities(str) {
   return str.split('').map(c => '&#' + c.charCodeAt(0) + ';').join('');
 }
 
+// Builds a regex that matches a value whose characters may be partially
+// entity-encoded (e.g. "Order" might appear as "&#79;rder" or "Or&#100;er").
+// Each character matches either literally or as any numeric entity form.
+function _buildEntityFlexRegex(value) {
+  const parts = value.split('').map(ch => {
+    const code = ch.charCodeAt(0);
+    const hex  = code.toString(16);
+    const lit  = ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return `(?:${lit}|&#${code};|&#x${hex};|&#x${hex.toUpperCase()};)`;
+  });
+  return new RegExp(parts.join(''), 'g');
+}
+
 // ── ID Generator ──────────────────────────────────────────────────────────────
 // Generates a new ID matching the exact character pattern of the original.
 // Digits → random digits, letters → random letters, separators preserved.
@@ -97,6 +110,11 @@ function replaceValue(html, oldValue, newValue, isEmail) {
       count += out.split(encOld).length - 1;
       out = out.split(encOld).join(encNew);
     }
+    // Partially entity-encoded form
+    if (!count) {
+      const flexRe = _buildEntityFlexRegex(oldValue);
+      out = out.replace(flexRe, () => { count++; return newValue; });
+    }
     // Also walk-and-replace by @ position (handles partial entity encoding)
     const atPos = out.indexOf('@');
     if (!count && atPos !== -1) {
@@ -115,12 +133,17 @@ function replaceValue(html, oldValue, newValue, isEmail) {
     // Plain form with word boundaries
     const plainRe = new RegExp('(?<![\\w])' + _escapeRegex(oldValue) + '(?![\\w])', 'g');
     out = out.replace(plainRe, () => { count++; return newValue; });
-    // Entity-encoded form
+    // Fully entity-encoded form
     const encOld = _encodeAsEntities(oldValue);
     const encNew = _encodeAsEntities(newValue);
     if (encOld !== oldValue && out.includes(encOld)) {
       count += out.split(encOld).length - 1;
       out = out.split(encOld).join(encNew);
+    }
+    // Partially entity-encoded form (handles upload-time encoding that only encoded some chars)
+    if (!count) {
+      const flexRe = _buildEntityFlexRegex(oldValue);
+      out = out.replace(flexRe, () => { count++; return newValue; });
     }
   }
 
