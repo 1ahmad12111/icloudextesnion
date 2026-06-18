@@ -96,8 +96,10 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       await sleep(50);
       await sendDebuggerEnter(mailTabId);
       await sleep(300);
-      await sendDebuggerTab(mailTabId);
-      broadcast({ type: 'log', text: 'Enter+Tab sent — To token confirmed, focus on Subject.', level: 'info' });
+      await sendDebuggerTab(mailTabId); // To → Cc/Bcc
+      await sleep(150);
+      await sendDebuggerTab(mailTabId); // Cc/Bcc → Subject
+      broadcast({ type: 'log', text: 'Enter+Tab+Tab sent — To token confirmed, focus on Subject.', level: 'info' });
 
       // Step 3: Fill Subject
       await sleep(500);
