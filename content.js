@@ -287,12 +287,21 @@
     click(sendBtn);
     await sleep(500);
 
-    // Handle "no subject" confirmation dialog if it appears
+    // Handle "no subject" dialog
     const sendAnywayBtn = Array.from(document.querySelectorAll('button, ui-button'))
       .find(b => /send anyway/i.test((b.textContent || b.getAttribute('aria-label') || '')));
     if (sendAnywayBtn) {
       click(sendAnywayBtn);
       await sleep(300);
+    }
+
+    // Detect "invalid email address" dialog — report as error so extension doesn't log false success
+    const invalidEmailDialog = Array.from(document.querySelectorAll('button'))
+      .find(b => /^ok$/i.test((b.textContent || '').trim()));
+    const dialogText = document.body.innerText || '';
+    if (invalidEmailDialog && /invalid.*email|addresses.*invalid/i.test(dialogText)) {
+      try { invalidEmailDialog.click(); } catch(e) {}
+      return { error: 'Invalid email address rejected by iCloud' };
     }
 
     return { ok: true };
