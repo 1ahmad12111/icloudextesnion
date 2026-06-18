@@ -99,17 +99,13 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
       await sendDebuggerType(mailTabId, email);
       broadcast({ type: 'log', text: 'To address typed via debugger.', level: 'info' });
 
-      // Step 3: Confirm To token with Enter, then Tab×2 to reach Subject (To→Cc/Bcc→Subject)
+      // Step 3: Confirm To token with Enter (no Tab — Tab deletes the chip)
       await sleep(300);
       await sendDebuggerEnter(mailTabId);
-      await sleep(400);
-      await sendDebuggerTab(mailTabId);   // To → Cc/Bcc
-      await sleep(300);
-      await sendDebuggerTab(mailTabId);   // Cc/Bcc → Subject
-      broadcast({ type: 'log', text: 'To token confirmed, focus on Subject.', level: 'info' });
+      await sleep(600);
+      broadcast({ type: 'log', text: 'To token confirmed.', level: 'info' });
 
-      // Step 4: Fill subject via content.js (native value setter, no debugger typing needed)
-      await sleep(300);
+      // Step 4: Fill subject via content.js (finds field by DOM, native value setter)
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
