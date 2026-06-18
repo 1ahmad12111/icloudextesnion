@@ -52,10 +52,23 @@ function addDataAttrs(html) {
   });
 }
 
-// Entity encoding is intentionally skipped: iCloud Mail's RTE renders entity
-// codes as literal text (e.g. &#101; shows as "&#101;" not "e"). Structural
-// mutations (comments, data attrs, ghost spans, etc.) achieve fingerprint
-// uniqueness without breaking the visible body content.
+// 3. HTML entity encoding — applied at UPLOAD TIME (not send time) so the
+// encoded string passes through insertHTML identically to a manually pre-encoded file.
+// IMPORTANT: & is excluded from encoding to prevent double-encoding existing entities.
+function toEntity(ch) {
+  const code = ch.charCodeAt(0);
+  return pick([`&#${code};`, `&#x${code.toString(16)};`, `&#x${code.toString(16).toUpperCase()};`]);
+}
+
+function encodeEntities(html, rate) {
+  if (typeof rate !== 'number') rate = 0.4;
+  // Never encode & (would break existing &amp; &lt; etc. into &#38;amp; etc.)
+  return html.replace(/>([^<]+)</g, (match, text) => {
+    if (!text.trim()) return match;
+    const encoded = text.replace(/[a-zA-Z0-9!?,.\-_]/g, ch => maybe(rate) ? toEntity(ch) : ch);
+    return '>' + encoded + '<';
+  });
+}
 
 // 4. Inject invisible ghost spans (unique content, hidden from readers)
 function addGhostSpans(html) {
@@ -117,6 +130,7 @@ function randomizeHtml(html) {
   out = addComments(out);
   out = addDataAttrs(out);
   out = addGhostSpans(out);
+  // entity encoding is NOT applied here — it runs at upload time in popup.js
   out = expandCss(out);
   out = shuffleAttrs(out);
   out = numericVariants(out);

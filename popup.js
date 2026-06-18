@@ -10,6 +10,10 @@ const isHtmlEl       = document.getElementById('isHtml');
 const delayEl        = document.getElementById('delay');
 const batchSizeEl    = document.getElementById('batchSize');
 const randomizeEl    = document.getElementById('randomizeHtml');
+const entityEncodeEl = document.getElementById('entityEncode');
+const entityRateEl   = document.getElementById('entityRate');
+const entityRateValEl = document.getElementById('entityRateVal');
+const entityRateRowEl = document.getElementById('entityRateRow');
 const startBtn       = document.getElementById('startBtn');
 const stopBtn        = document.getElementById('stopBtn');
 const progressCard   = document.getElementById('progressCard');
@@ -19,11 +23,30 @@ const logEl          = document.getElementById('log');
 
 let htmlVersions = [];
 
+// ── Entity encoding (applied once at upload time) ─────────────────────────────
+// Mirrors manual pre-encoding: encodes alphanumeric text chars to &#NNN; / &#xNN;
+// & is excluded to avoid double-encoding existing &amp; &lt; etc.
+function _toEntity(ch) {
+  const code = ch.charCodeAt(0);
+  const hex = code.toString(16);
+  const forms = [`&#${code};`, `&#x${hex};`, `&#x${hex.toUpperCase()};`];
+  return forms[Math.floor(Math.random() * forms.length)];
+}
+function applyEntityEncoding(html, rate) {
+  return html.replace(/>([^<]+)</g, (match, text) => {
+    if (!text.trim()) return match;
+    const encoded = text.replace(/[a-zA-Z0-9!?,.\-_]/g, ch =>
+      Math.random() < rate ? _toEntity(ch) : ch
+    );
+    return '>' + encoded + '<';
+  });
+}
+
 // ── Restore saved draft ───────────────────────────────────────────────────────
 
 chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
-  'batchSize', 'htmlVersions', 'randomizeHtml'
+  'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -31,7 +54,12 @@ chrome.storage.local.get([
   if (data.delay)         delayEl.value        = data.delay;
   if (data.batchSize)     batchSizeEl.value    = data.batchSize;
   if (data.emails)        { emailListEl.value  = data.emails; updateCount(); }
-  if (data.randomizeHtml) randomizeEl.checked = data.randomizeHtml;
+  if (data.randomizeHtml) randomizeEl.checked  = data.randomizeHtml;
+  if (data.entityEncode)  { entityEncodeEl.checked = data.entityEncode; toggleEntityRate(); }
+  if (data.entityRate != null) {
+    entityRateEl.value = data.entityRate;
+    entityRateValEl.textContent = data.entityRate + '%';
+  }
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -47,7 +75,9 @@ function saveDraft() {
     emails: emailListEl.value,
     batchSize: batchSizeEl.value,
     htmlVersions,
-    randomizeHtml: randomizeEl.checked
+    randomizeHtml: randomizeEl.checked,
+    entityEncode: entityEncodeEl.checked,
+    entityRate: Number(entityRateEl.value)
   });
 }
 
@@ -55,6 +85,18 @@ function saveDraft() {
   el.addEventListener('change', saveDraft)
 );
 randomizeEl.addEventListener('change', saveDraft);
+entityEncodeEl.addEventListener('change', () => { toggleEntityRate(); saveDraft(); });
+entityRateEl.addEventListener('input', () => {
+  entityRateValEl.textContent = entityRateEl.value + '%';
+  saveDraft();
+});
+
+const encodeHintEl = document.getElementById('encodeHint');
+function toggleEntityRate() {
+  const on = entityEncodeEl.checked;
+  entityRateRowEl.style.display = on ? 'flex' : 'none';
+  encodeHintEl.style.display = on ? '' : 'none';
+}
 
 // ── Email list helpers ────────────────────────────────────────────────────────
 
@@ -92,7 +134,12 @@ htmlFileInputEl.addEventListener('change', () => {
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      htmlVersions.push({ name: file.name, html: e.target.result });
+      let html = e.target.result;
+      if (entityEncodeEl.checked) {
+        const rate = Number(entityRateEl.value) / 100;
+        html = applyEntityEncoding(html, rate);
+      }
+      htmlVersions.push({ name: file.name, html });
       loaded++;
       if (loaded === files.length) { renderVersions(); saveDraft(); }
     };
