@@ -47,17 +47,31 @@
         <span class="hint">&nbsp;— unique fingerprint every send (structural mutations)</span>
       </label>
 
-      <div class="toggle-label">
-        <label class="toggle-label" style="border-top:none;padding-top:0">
-          <input type="checkbox" id="entityEncode" />
-          <span>Entity-encode HTML on upload</span>
-          <span class="hint">&nbsp;— applied once when file is loaded</span>
-        </label>
-        <div id="entityRateRow" style="display:none; padding-left:20px; margin-top:4px; align-items:center; gap:8px; flex-wrap:wrap">
-          <span class="hint">Rate:</span>
-          <input type="range" id="entityRate" min="5" max="80" step="5" value="40" style="width:100px;accent-color:#0071e3" />
-          <span id="entityRateVal" class="badge">40%</span>
+      <label class="toggle-label" style="border-top:none;padding-top:0">
+        <input type="checkbox" id="entityEncode" />
+        <span>Entity-encode HTML on upload</span>
+        <span class="hint">&nbsp;— applied once when file is loaded</span>
+      </label>
+      <div id="entityRateRow" style="display:none; padding-left:20px; margin-top:4px; align-items:center; gap:8px; flex-wrap:wrap">
+        <span class="hint">Rate:</span>
+        <input type="range" id="entityRate" min="5" max="80" step="5" value="40" style="width:100px;accent-color:#0071e3" />
+        <span id="entityRateVal" class="badge">40%</span>
+      </div>
+
+      <label class="toggle-label">
+        <input type="checkbox" id="idRandomize" />
+        <span>Randomize IDs per email</span>
+        <span class="hint">&nbsp;— Transaction ID, Invoice ID, date &amp; support email</span>
+      </label>
+      <div id="idRandomizePanel" style="display:none">
+        <div id="idDetectedBox" class="id-detected-box">
+          <span class="hint">Upload an HTML version to auto-detect fields.</span>
         </div>
+        <label class="id-date-row">
+          <span class="hint">Transaction date to use:</span>
+          <input type="date" id="idDateInput" />
+          <button type="button" id="idDateToday" class="file-btn" style="padding:4px 10px;font-size:11px">Today</button>
+        </label>
       </div>
     </section>
 

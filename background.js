@@ -1,4 +1,5 @@
 importScripts('randomizer.js');
+importScripts('id-randomizer.js');
 
 let stopRequested = false;
 let mailTabId = null;
@@ -44,7 +45,7 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso }) {
   const total = emails.length;
   batchSize = batchSize || 10;
 
@@ -53,6 +54,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     broadcast({ type: 'log', text: subjects.length + ' subject lines loaded — will rotate every batch.', level: 'info' });
   if (randomize)
     broadcast({ type: 'log', text: 'HTML randomizer ON — structural mutations per email.', level: 'info' });
+  if (idRandomize)
+    broadcast({ type: 'log', text: 'ID randomizer ON — Transaction ID, Invoice ID, date and email randomized per email.', level: 'info' });
 
   let sent = 0;
 
@@ -105,6 +108,13 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       if (randomize && isHtml) {
         body = randomizeHtml(body);
         broadcast({ type: 'log', text: 'HTML randomized.', level: 'info' });
+      }
+
+      // Randomize Transaction ID, Invoice ID, date and support email
+      if (idRandomize && idDetected) {
+        const { out, log } = randomizeIds(body, idDetected, fixedDateIso);
+        body = out;
+        log.forEach(l => broadcast({ type: 'log', text: l, level: 'info' }));
       }
 
       // Step 1: Open compose and focus To field

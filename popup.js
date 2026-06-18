@@ -1,31 +1,38 @@
-const emailListEl    = document.getElementById('emailList');
-const fileInputEl    = document.getElementById('fileInput');
+const emailListEl     = document.getElementById('emailList');
+const fileInputEl     = document.getElementById('fileInput');
 const htmlFileInputEl = document.getElementById('htmlFileInput');
-const versionListEl  = document.getElementById('versionList');
-const versionHintEl  = document.getElementById('versionHint');
-const emailCountEl   = document.getElementById('emailCount');
-const subjectListEl  = document.getElementById('subjectList');
-const bodyEl         = document.getElementById('body');
-const isHtmlEl       = document.getElementById('isHtml');
-const delayEl        = document.getElementById('delay');
-const batchSizeEl    = document.getElementById('batchSize');
-const randomizeEl    = document.getElementById('randomizeHtml');
-const entityEncodeEl = document.getElementById('entityEncode');
-const entityRateEl   = document.getElementById('entityRate');
+const versionListEl   = document.getElementById('versionList');
+const versionHintEl   = document.getElementById('versionHint');
+const emailCountEl    = document.getElementById('emailCount');
+const subjectListEl   = document.getElementById('subjectList');
+const bodyEl          = document.getElementById('body');
+const isHtmlEl        = document.getElementById('isHtml');
+const delayEl         = document.getElementById('delay');
+const batchSizeEl     = document.getElementById('batchSize');
+const randomizeEl     = document.getElementById('randomizeHtml');
+const entityEncodeEl  = document.getElementById('entityEncode');
+const entityRateEl    = document.getElementById('entityRate');
 const entityRateValEl = document.getElementById('entityRateVal');
 const entityRateRowEl = document.getElementById('entityRateRow');
-const startBtn       = document.getElementById('startBtn');
-const stopBtn        = document.getElementById('stopBtn');
-const progressCard   = document.getElementById('progressCard');
-const progressBar    = document.getElementById('progressBar');
-const progressText   = document.getElementById('progressText');
-const logEl          = document.getElementById('log');
+const encodeHintEl    = document.getElementById('encodeHint');
+const idRandomizeEl   = document.getElementById('idRandomize');
+const idRandomizePanelEl = document.getElementById('idRandomizePanel');
+const idDetectedBoxEl = document.getElementById('idDetectedBox');
+const idDateInputEl   = document.getElementById('idDateInput');
+const idDateTodayBtn  = document.getElementById('idDateToday');
+const startBtn        = document.getElementById('startBtn');
+const stopBtn         = document.getElementById('stopBtn');
+const progressCard    = document.getElementById('progressCard');
+const progressBar     = document.getElementById('progressBar');
+const progressText    = document.getElementById('progressText');
+const logEl           = document.getElementById('log');
 
 let htmlVersions = [];
+// Detected values from the first uploaded HTML version (used for ID randomization)
+let idDetected = null; // { txnValue, invValue, dateValue, sellerName, emailValue }
 
 // ── Entity encoding (applied once at upload time) ─────────────────────────────
-// Mirrors manual pre-encoding: encodes alphanumeric text chars to &#NNN; / &#xNN;
-// & is excluded to avoid double-encoding existing &amp; &lt; etc.
+
 function _toEntity(ch) {
   const code = ch.charCodeAt(0);
   const hex = code.toString(16);
@@ -35,20 +42,85 @@ function _toEntity(ch) {
 function applyEntityEncoding(html, rate) {
   return html.replace(/>([^<]+)</g, (match, text) => {
     if (!text.trim()) return match;
-    // Match existing &entities; first (pass through untouched), then encode lone chars
     const encoded = text.replace(/(&[a-zA-Z#][a-zA-Z0-9]*;)|([a-zA-Z0-9!?,.\-_])/g, (m, entity, ch) => {
-      if (entity) return entity; // preserve &nbsp; &amp; &#160; etc. intact
+      if (entity) return entity;
       return Math.random() < rate ? _toEntity(ch) : ch;
     });
     return '>' + encoded + '<';
   });
 }
 
+// ── ID detection (runs in popup — has DOM access for decodeEntities) ──────────
+
+function _decodeEntities(str) {
+  const t = document.createElement('textarea');
+  t.innerHTML = str;
+  return t.value;
+}
+function _toPlain(html) {
+  return _decodeEntities(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '));
+}
+
+function detectIds(html) {
+  const plain = _toPlain(html);
+  const txnMatch    = plain.match(/Transaction\s+ID\s*[:\s]+([A-Z0-9\-\.]+)/i);
+  const invMatch    = plain.match(/(?:Invoice|Order)\s+ID\s*[:\s]+([A-Z0-9\-\.]+)/i);
+  const dateMatch   = plain.match(/Transaction\s+[Dd]ate\s*[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
+  const sellerMatch = plain.match(/Seller\s*[:\s]+([A-Za-z0-9 &.,'\-]{3,60}?)\s*(?:Instructions|\(|$)/i);
+  const fullDecoded = _decodeEntities(html);
+  const emailMatch  = fullDecoded.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  return {
+    txnValue:   txnMatch    ? txnMatch[1].trim()    : null,
+    invValue:   invMatch    ? invMatch[1].trim()     : null,
+    dateValue:  dateMatch   ? dateMatch[1].trim()    : null,
+    sellerName: sellerMatch ? sellerMatch[1].trim()  : null,
+    emailValue: emailMatch  ? emailMatch[0].trim()   : null,
+  };
+}
+
+function _parseDateToIso(str) {
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const cleaned = str.trim().replace(',', '');
+  const parts = cleaned.split(/\s+/);
+  if (parts.length !== 3) return _todayIso();
+  const mon = MONTHS.findIndex(m => m.toLowerCase() === parts[0].toLowerCase().slice(0, 3));
+  if (mon === -1) return _todayIso();
+  return `${parts[2]}-${String(mon + 1).padStart(2, '0')}-${String(parseInt(parts[1])).padStart(2, '0')}`;
+}
+
+function _todayIso() {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+
+function renderIdDetectedBox(detected) {
+  if (!detected) {
+    idDetectedBoxEl.innerHTML = '<span class="hint">Upload an HTML version to auto-detect fields.</span>';
+    return;
+  }
+  const rows = [
+    ['Transaction ID', detected.txnValue],
+    ['Invoice ID',     detected.invValue],
+    ['Date',           detected.dateValue],
+    ['Seller',         detected.sellerName],
+    ['Support Email',  detected.emailValue],
+  ];
+  const found = rows.filter(([, v]) => v);
+  if (!found.length) {
+    idDetectedBoxEl.innerHTML = '<span class="hint" style="color:#e67e22">⚠ No Transaction ID or Invoice ID detected in this file.</span>';
+    return;
+  }
+  idDetectedBoxEl.innerHTML = found.map(([label, val]) =>
+    `<div class="id-detected-row"><span class="id-det-label">${label}</span><span class="id-det-val">${escHtml(val)}</span></div>`
+  ).join('');
+}
+
 // ── Restore saved draft ───────────────────────────────────────────────────────
 
 chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
-  'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate'
+  'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
+  'idRandomize', 'idDetected', 'fixedDateIso'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -62,6 +134,9 @@ chrome.storage.local.get([
     entityRateEl.value = data.entityRate;
     entityRateValEl.textContent = data.entityRate + '%';
   }
+  if (data.idRandomize) { idRandomizeEl.checked = true; toggleIdPanel(); }
+  if (data.idDetected)  { idDetected = data.idDetected; renderIdDetectedBox(idDetected); }
+  if (data.fixedDateIso) idDateInputEl.value = data.fixedDateIso;
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -70,16 +145,19 @@ chrome.storage.local.get([
 
 function saveDraft() {
   chrome.storage.local.set({
-    subjectList: subjectListEl.value,
-    body: bodyEl.value,
-    isHtml: isHtmlEl.checked,
-    delay: delayEl.value,
-    emails: emailListEl.value,
-    batchSize: batchSizeEl.value,
+    subjectList:  subjectListEl.value,
+    body:         bodyEl.value,
+    isHtml:       isHtmlEl.checked,
+    delay:        delayEl.value,
+    emails:       emailListEl.value,
+    batchSize:    batchSizeEl.value,
     htmlVersions,
     randomizeHtml: randomizeEl.checked,
-    entityEncode: entityEncodeEl.checked,
-    entityRate: Number(entityRateEl.value)
+    entityEncode:  entityEncodeEl.checked,
+    entityRate:    Number(entityRateEl.value),
+    idRandomize:   idRandomizeEl.checked,
+    idDetected,
+    fixedDateIso:  idDateInputEl.value || null,
   });
 }
 
@@ -92,12 +170,20 @@ entityRateEl.addEventListener('input', () => {
   entityRateValEl.textContent = entityRateEl.value + '%';
   saveDraft();
 });
+idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
+idDateInputEl.addEventListener('change', saveDraft);
+idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
 
-const encodeHintEl = document.getElementById('encodeHint');
+// ── Toggle helpers ────────────────────────────────────────────────────────────
+
 function toggleEntityRate() {
   const on = entityEncodeEl.checked;
   entityRateRowEl.style.display = on ? 'flex' : 'none';
   encodeHintEl.style.display = on ? '' : 'none';
+}
+
+function toggleIdPanel() {
+  idRandomizePanelEl.style.display = idRandomizeEl.checked ? '' : 'none';
 }
 
 // ── Email list helpers ────────────────────────────────────────────────────────
@@ -133,10 +219,21 @@ htmlFileInputEl.addEventListener('change', () => {
   const files = Array.from(htmlFileInputEl.files);
   if (!files.length) return;
   let loaded = 0;
-  files.forEach(file => {
+  files.forEach((file, fileIndex) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       let html = e.target.result;
+
+      // Detect IDs from the first file uploaded (template reference)
+      if (fileIndex === 0 && htmlVersions.length === 0) {
+        idDetected = detectIds(html);
+        renderIdDetectedBox(idDetected);
+        // Pre-fill date picker from detected date
+        if (idDetected.dateValue && !idDateInputEl.value) {
+          idDateInputEl.value = _parseDateToIso(idDetected.dateValue);
+        }
+      }
+
       if (entityEncodeEl.checked) {
         const rate = Number(entityRateEl.value) / 100;
         html = applyEntityEncoding(html, rate);
@@ -171,6 +268,7 @@ function renderVersions() {
   versionListEl.querySelectorAll('.version-remove').forEach(btn => {
     btn.addEventListener('click', () => {
       htmlVersions.splice(Number(btn.dataset.i), 1);
+      if (!htmlVersions.length) { idDetected = null; renderIdDetectedBox(null); }
       renderVersions(); saveDraft();
     });
   });
@@ -208,21 +306,31 @@ function setUI(sending) {
 }
 
 async function startSending() {
-  const emails    = getEmails();
-  const subjects  = getSubjects();
-  const body      = bodyEl.value.trim();
-  const isHtml    = isHtmlEl.checked;
-  const delay     = Math.max(1, parseInt(delayEl.value, 10) || 5);
-  const batchSize = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
-  const randomize = randomizeEl.checked;
+  const emails     = getEmails();
+  const subjects   = getSubjects();
+  const body       = bodyEl.value.trim();
+  const isHtml     = isHtmlEl.checked;
+  const delay      = Math.max(1, parseInt(delayEl.value, 10) || 5);
+  const batchSize  = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
+  const randomize  = randomizeEl.checked;
+  const idRandomize = idRandomizeEl.checked;
+  const fixedDateIso = idDateInputEl.value || null;
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
 
-  const bodies = htmlVersions.length ? htmlVersions.map(v => v.html) : [body];
+  const bodies  = htmlVersions.length ? htmlVersions.map(v => v.html) : [body];
   const useHtml = htmlVersions.length > 0 ? true : isHtml;
 
   if (!bodies[0]) { alert('Please enter a message body or upload at least one HTML file.'); return; }
+
+  // Block sending if ID randomize is on but no IDs were detected
+  if (idRandomize) {
+    if (!idDetected || (!idDetected.txnValue && !idDetected.invValue)) {
+      alert('ID Randomizer is ON but no Transaction ID or Invoice ID was detected in your HTML. Please upload a template with detectable IDs, or turn off ID randomization.');
+      return;
+    }
+  }
 
   isSending = true;
   logEl.innerHTML = '';
@@ -232,7 +340,8 @@ async function startSending() {
   chrome.runtime.sendMessage({
     action: 'startSending',
     emails, subjects, bodies,
-    isHtml: useHtml, delay, batchSize, randomize
+    isHtml: useHtml, delay, batchSize,
+    randomize, idRandomize, idDetected, fixedDateIso
   });
 }
 
