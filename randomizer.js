@@ -52,21 +52,10 @@ function addDataAttrs(html) {
   });
 }
 
-// 3. Convert text characters to HTML entities at configurable rate
-const NAMED_ENTITIES = {
-  '©': '&copy;', '®': '&reg;', '™': '&trade;',
-  '—': '&mdash;', '–': '&ndash;', '…': '&hellip;'
-};
-function toEntity(ch) {
-  if (NAMED_ENTITIES[ch]) return NAMED_ENTITIES[ch];
-  const code = ch.charCodeAt(0);
-  return pick([`&#${code};`, `&#x${code.toString(16)};`, `&#x${code.toString(16).toUpperCase()};`]);
-}
-function encodeEntities(html, rate) {
-  return mapTextNodes(html, text =>
-    text.replace(/[a-zA-Z0-9!?,.\-_©®™—–…]/g, ch => maybe(rate) ? toEntity(ch) : ch)
-  );
-}
+// Entity encoding is intentionally skipped: iCloud Mail's RTE renders entity
+// codes as literal text (e.g. &#101; shows as "&#101;" not "e"). Structural
+// mutations (comments, data attrs, ghost spans, etc.) achieve fingerprint
+// uniqueness without breaking the visible body content.
 
 // 4. Inject invisible ghost spans (unique content, hidden from readers)
 function addGhostSpans(html) {
@@ -122,13 +111,11 @@ function varyWhitespace(html) {
 }
 
 // Main export — applies all 8 mutations in sequence
-function randomizeHtml(html, entityRate) {
-  if (typeof entityRate !== 'number') entityRate = 0.4;
+function randomizeHtml(html) {
   if (!html || !html.trim()) return html;
   let out = html;
   out = addComments(out);
   out = addDataAttrs(out);
-  out = encodeEntities(out, entityRate);
   out = addGhostSpans(out);
   out = expandCss(out);
   out = shuffleAttrs(out);

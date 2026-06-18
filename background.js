@@ -44,10 +44,9 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityRate }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize }) {
   const total = emails.length;
   batchSize = batchSize || 10;
-  if (typeof entityRate !== 'number') entityRate = 0.4;
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
   if (subjects.length > 1)
@@ -104,7 +103,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
 
       // Randomize HTML fingerprint for this specific email
       if (randomize && isHtml) {
-        body = randomizeHtml(body, entityRate);
+        body = randomizeHtml(body);
         broadcast({ type: 'log', text: 'HTML randomized.', level: 'info' });
       }
 

@@ -10,9 +10,6 @@ const isHtmlEl       = document.getElementById('isHtml');
 const delayEl        = document.getElementById('delay');
 const batchSizeEl    = document.getElementById('batchSize');
 const randomizeEl    = document.getElementById('randomizeHtml');
-const entityRateEl   = document.getElementById('entityRate');
-const entityRateValEl = document.getElementById('entityRateVal');
-const entityRateRowEl = document.getElementById('entityRateRow');
 const startBtn       = document.getElementById('startBtn');
 const stopBtn        = document.getElementById('stopBtn');
 const progressCard   = document.getElementById('progressCard');
@@ -26,7 +23,7 @@ let htmlVersions = [];
 
 chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
-  'batchSize', 'htmlVersions', 'randomizeHtml', 'entityRate'
+  'batchSize', 'htmlVersions', 'randomizeHtml'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -34,11 +31,7 @@ chrome.storage.local.get([
   if (data.delay)         delayEl.value        = data.delay;
   if (data.batchSize)     batchSizeEl.value    = data.batchSize;
   if (data.emails)        { emailListEl.value  = data.emails; updateCount(); }
-  if (data.randomizeHtml) { randomizeEl.checked = data.randomizeHtml; toggleEntityRate(); }
-  if (data.entityRate != null) {
-    entityRateEl.value = data.entityRate;
-    entityRateValEl.textContent = data.entityRate + '%';
-  }
+  if (data.randomizeHtml) randomizeEl.checked = data.randomizeHtml;
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -54,25 +47,14 @@ function saveDraft() {
     emails: emailListEl.value,
     batchSize: batchSizeEl.value,
     htmlVersions,
-    randomizeHtml: randomizeEl.checked,
-    entityRate: Number(entityRateEl.value)
+    randomizeHtml: randomizeEl.checked
   });
 }
 
 [subjectListEl, bodyEl, emailListEl, delayEl, isHtmlEl, batchSizeEl].forEach(el =>
   el.addEventListener('change', saveDraft)
 );
-randomizeEl.addEventListener('change', () => { toggleEntityRate(); saveDraft(); });
-entityRateEl.addEventListener('input', () => {
-  entityRateValEl.textContent = entityRateEl.value + '%';
-  saveDraft();
-});
-
-// ── Randomizer toggle ─────────────────────────────────────────────────────────
-
-function toggleEntityRate() {
-  entityRateRowEl.style.display = randomizeEl.checked ? '' : 'none';
-}
+randomizeEl.addEventListener('change', saveDraft);
 
 // ── Email list helpers ────────────────────────────────────────────────────────
 
@@ -184,7 +166,6 @@ async function startSending() {
   const delay     = Math.max(1, parseInt(delayEl.value, 10) || 5);
   const batchSize = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
   const randomize = randomizeEl.checked;
-  const entityRate = Number(entityRateEl.value) / 100;
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
@@ -202,8 +183,7 @@ async function startSending() {
   chrome.runtime.sendMessage({
     action: 'startSending',
     emails, subjects, bodies,
-    isHtml: useHtml, delay, batchSize,
-    randomize, entityRate
+    isHtml: useHtml, delay, batchSize, randomize
   });
 }
 

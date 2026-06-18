@@ -40,19 +40,11 @@
       <h2>3. Settings</h2>
       <label>Delay between emails (seconds)<input type="number" id="delay" value="5" min="1" max="60" /></label>
 
-      <div class="randomizer-row">
-        <label class="toggle-label">
-          <input type="checkbox" id="randomizeHtml" />
-          <span>Randomize HTML per email</span>
-          <span class="hint">&nbsp;— unique fingerprint every send</span>
-        </label>
-        <div id="entityRateRow" class="entity-rate-row" style="display:none">
-          <span class="hint">Entity rate:</span>
-          <input type="range" id="entityRate" min="0" max="100" step="5" value="40" />
-          <span id="entityRateVal" class="badge">40%</span>
-          <span class="hint rate-labels"><span>subtle</span><span>aggressive</span></span>
-        </div>
-      </div>
+      <label class="toggle-label">
+        <input type="checkbox" id="randomizeHtml" />
+        <span>Randomize HTML per email</span>
+        <span class="hint">&nbsp;— unique fingerprint every send (7 structural mutations)</span>
+      </label>
     </section>
 
     <div class="controls">
