@@ -28,6 +28,10 @@ async function detachDebugger() {
   debuggerAttached = false;
 }
 
+async function sendDebuggerType(tabId, text) {
+  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+}
+
 async function sendDebuggerEnter(tabId) {
   const base = { modifiers: 0, key: 'Enter', code: 'Enter', keyCode: 13,
     nativeVirtualKeyCode: 13, autoRepeat: false, isKeypad: false, isSystemKey: false };
@@ -85,37 +89,47 @@ async function runSendLoop({ emails, subject, body, isHtml, delay }) {
     broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
 
     try {
-      // Step 1: Open compose and type To address (returns with To input focused)
-      const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: email });
+      // Step 1: Open compose — focuses the To field (no typing yet)
+      const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose' });
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
-      broadcast({ type: 'log', text: 'Compose open, To typed.', level: 'info' });
+      broadcast({ type: 'log', text: 'Compose open, To field focused.', level: 'info' });
 
-      // Step 2: Fire trusted Enter to confirm the To token.
-      await sleep(50);
+      // Step 2: Type email via debugger (trusted Input.insertText, bypasses framework)
+      await sleep(100);
+      await sendDebuggerType(mailTabId, email);
+      broadcast({ type: 'log', text: 'To address typed via debugger.', level: 'info' });
+
+      // Step 3: Confirm To token with Enter
+      await sleep(300);
       await sendDebuggerEnter(mailTabId);
-      await sleep(400);
+      await sleep(300);
       await sendDebuggerEnter(mailTabId); // retry
-      broadcast({ type: 'log', text: 'Trusted Enter sent — token should be confirmed.', level: 'info' });
+      broadcast({ type: 'log', text: 'To token confirmed.', level: 'info' });
 
-      // Step 3: Fill Subject (fillSubject clicks the field, which also blurs To as backup token confirmation)
-      await sleep(600);
-      const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
-      if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
-      broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
+      // Step 4: Focus Subject field
+      await sleep(400);
+      const focusSubjResult = await sendToFrame(mailFrameId, { action: 'focusSubject' });
+      if (focusSubjResult && focusSubjResult.error) throw new Error(focusSubjResult.error);
+      broadcast({ type: 'log', text: 'Subject field focused.', level: 'info' });
 
-      // Step 4: Find RTE iframe
+      // Step 5: Type subject via debugger
+      await sleep(100);
+      await sendDebuggerType(mailTabId, subject);
+      broadcast({ type: 'log', text: 'Subject typed via debugger.', level: 'info' });
+
+      // Step 6: Find RTE iframe
       const rteFrameId = await findRteFrame(4000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
 
-      // Step 5: Fill body
+      // Step 7: Fill body
       const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body, isHtml });
       if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
       broadcast({ type: 'log', text: 'Body filled.', level: 'info' });
 
       await sleep(500);
 
-      // Step 6: Click Send
+      // Step 8: Click Send
       const sendResult = await sendToFrame(mailFrameId, { action: 'clickSend' });
       if (sendResult && sendResult.error) throw new Error(sendResult.error);
 

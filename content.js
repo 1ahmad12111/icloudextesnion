@@ -103,12 +103,12 @@
   }
 
   // ── Action: openCompose ─────────────────────────────────────────────────────
-  async function openCompose(to) {
+  // Just opens compose and focuses the To field — typing is done via debugger Input.insertText
+  async function openCompose() {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
     click(composeBtn);
 
-    // Poll for ui-autocomplete-field inputs (language-agnostic, works in any locale)
     let toField = null;
     const deadline = Date.now() + 6000;
     while (Date.now() < deadline) {
@@ -119,17 +119,37 @@
 
     if (!toField) return { error: 'To field never appeared after compose. DIAG: ' + diagnose() };
 
+    // Click and focus — debugger Input.insertText will type into the focused element
     try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
-    await sleep(200);
-
-    await typeInto(toField, to);
-    await sleep(300);
-
-    // Re-focus so the upcoming trusted Enter key lands on this input
-    try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
-    await sleep(50);
+    await sleep(150);
     try { toField.focus(); } catch(e) {}
-    await sleep(50);
+    await sleep(100);
+
+    return { ok: true };
+  }
+
+  // ── Action: focusSubject ────────────────────────────────────────────────────
+  // Finds the Subject field, clicks it to give it focus, returns ok/error
+  async function focusSubject() {
+    // Try 1: second ui-autocomplete-field shadow input
+    const ac = getAutoCompleteInputs();
+    let subjectField = ac[1] || null;
+
+    // Try 2: walk all shadow roots for all visible inputs; second one is Subject
+    if (!subjectField) {
+      const allInputs = getAllShadowInputs(document).filter(i => {
+        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
+      });
+      if (allInputs.length >= 2) subjectField = allInputs[1];
+      else if (allInputs.length === 1) subjectField = allInputs[0];
+    }
+
+    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
+
+    try { click(subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField); } catch(e) {}
+    await sleep(150);
+    try { subjectField.focus(); } catch(e) {}
+    await sleep(100);
 
     return { ok: true };
   }
@@ -155,32 +175,9 @@
     return arr;
   }
 
-  // ── Action: fillSubject ─────────────────────────────────────────────────────
+  // ── Action: fillSubject — kept for compat but typing now done via debugger ──
   async function fillSubject(subject) {
-    let subjectField = null;
-
-    // Try 0: second ui-autocomplete-field shadow input (Subject on some layouts)
-    const ac = getAutoCompleteInputs();
-    if (ac[1]) subjectField = ac[1];
-
-    // Try 1: walk every shadow root in the entire document to find all inputs,
-    //        filter to visible ones, take the second (To=0, Subject=1)
-    if (!subjectField) {
-      const allInputs = getAllShadowInputs(document).filter(i => {
-        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
-      });
-      if (allInputs.length >= 2) subjectField = allInputs[1];
-      else if (allInputs.length === 1) subjectField = allInputs[0];
-    }
-    if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
-    // Click subject field — also triggers blur on To field which confirms the token
-    try { click(subjectField.closest('ui-text-field') || subjectField.closest('ui-autocomplete-field') || subjectField); } catch(e) {}
-    await sleep(200);
-    await typeInto(subjectField, subject);
-    await sleep(300);
-    try { subjectField.blur(); } catch(e) {}
-    await sleep(500);
-    return { ok: true };
+    return await focusSubject();
   }
 
   // ── Action: fillBody (runs in mail2-rte iframe) ──────────────────────────
@@ -266,7 +263,13 @@
       return true;
     }
     if (msg.action === 'openCompose') {
-      openCompose(msg.to)
+      openCompose()
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
+      return true;
+    }
+    if (msg.action === 'focusSubject') {
+      focusSubject()
         .then(r => sendResponse(r))
         .catch(e => sendResponse({ error: e.message }));
       return true;
