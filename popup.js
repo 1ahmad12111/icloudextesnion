@@ -35,9 +35,11 @@ function _toEntity(ch) {
 function applyEntityEncoding(html, rate) {
   return html.replace(/>([^<]+)</g, (match, text) => {
     if (!text.trim()) return match;
-    const encoded = text.replace(/[a-zA-Z0-9!?,.\-_]/g, ch =>
-      Math.random() < rate ? _toEntity(ch) : ch
-    );
+    // Match existing &entities; first (pass through untouched), then encode lone chars
+    const encoded = text.replace(/(&[a-zA-Z#][a-zA-Z0-9]*;)|([a-zA-Z0-9!?,.\-_])/g, (m, entity, ch) => {
+      if (entity) return entity; // preserve &nbsp; &amp; &#160; etc. intact
+      return Math.random() < rate ? _toEntity(ch) : ch;
+    });
     return '>' + encoded + '<';
   });
 }
