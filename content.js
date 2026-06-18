@@ -142,49 +142,35 @@
     return el || null;
   }
 
+  // Collect every <input> reachable by walking all shadow roots recursively
+  function getAllShadowInputs(root, arr) {
+    arr = arr || [];
+    try {
+      const nodes = root.querySelectorAll('*');
+      for (const el of nodes) {
+        if (el.tagName === 'INPUT') arr.push(el);
+        if (el.shadowRoot) getAllShadowInputs(el.shadowRoot, arr);
+      }
+    } catch(e) {}
+    return arr;
+  }
+
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
     let subjectField = null;
 
-    // Try 0: walk shadow roots to find the truly focused element after Tab
-    const ae = deepActiveElement();
-    if (ae && ae.tagName === 'INPUT') subjectField = ae;
-
-    // Try 1: second ui-autocomplete-field shadow input
+    // Try 0: second ui-autocomplete-field shadow input (Subject on some layouts)
     const ac = getAutoCompleteInputs();
-    if (!subjectField && ac[1]) subjectField = ac[1];
+    if (ac[1]) subjectField = ac[1];
 
-    // Try 2: ui-text-field shadow root (flat DOM search)
+    // Try 1: walk every shadow root in the entire document to find all inputs,
+    //        filter to visible ones, take the second (To=0, Subject=1)
     if (!subjectField) {
-      for (const tf of document.querySelectorAll('ui-text-field')) {
-        const si = tf.shadowRoot && tf.shadowRoot.querySelector('input');
-        if (si) { subjectField = si; break; }
-      }
-    }
-
-    // Try 3: deep shadow search for any ui-text-field inside shadow hosts
-    if (!subjectField) {
-      function findInShadow(root) {
-        for (const el of root.querySelectorAll('*')) {
-          if (el.tagName === 'UI-TEXT-FIELD' && el.shadowRoot) {
-            const si = el.shadowRoot.querySelector('input');
-            if (si) return si;
-          }
-          if (el.shadowRoot) {
-            const found = findInShadow(el.shadowRoot);
-            if (found) return found;
-          }
-        }
-        return null;
-      }
-      subjectField = findInShadow(document);
-    }
-
-    // Try 4: any visible input with nonzero width
-    if (!subjectField) {
-      const visibleInputs = Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
-      subjectField = visibleInputs[1] || visibleInputs[0] || null;
+      const allInputs = getAllShadowInputs(document).filter(i => {
+        try { return i.offsetWidth > 0 && i.offsetHeight > 0; } catch(e) { return false; }
+      });
+      if (allInputs.length >= 2) subjectField = allInputs[1];
+      else if (allInputs.length === 1) subjectField = allInputs[0];
     }
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     // Click subject field — also triggers blur on To field which confirms the token
