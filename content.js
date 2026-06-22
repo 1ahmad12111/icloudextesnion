@@ -40,9 +40,22 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  // Finds a field by its visible label text (e.g. "To", "Subject")
+  // Localized label translations for iCloud's UI fields across all supported locales
+  const FIELD_LABELS = {
+    To: ['To','À','宛先','An','Para','A','Aan','Para','Till','До','Til','Til','До','Кому',
+         'Vastaanottaja','Till','Aan','Vers','İlgili','إلى','收件人','받는 사람','Kepada',
+         'ถึง','Đến','Sa','Kay','Kwa'],
+    Subject: ['Subject','Objet','件名','Betreff','Asunto','Oggetto','Onderwerp','Assunto',
+              'Ämne','Тема','Emne','Emne','Тема','Тема','Aihe','Ämne','Onderwerp',
+              'Objet','Konu','الموضوع','主题','제목','Subjek','หัวเรื่อง','Chủ đề',
+              'Paksa','Paksa','Mada'],
+  };
+
+  // Finds a field by its visible label text, accepting an array of candidates
   function findFieldByLabelText(labelText) {
-    const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
+    const candidates = FIELD_LABELS[labelText] || [labelText];
+    for (const lbl of candidates) {
+    const re = new RegExp('^' + lbl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':?\\s*$', 'i');
     const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
       .filter(el => re.test((el.textContent || '').trim()));
     for (const label of labels) {
@@ -64,6 +77,7 @@
         if (si && si !== label) return si;
       }
     }
+    } // end candidates loop
     return null;
   }
 
@@ -86,8 +100,27 @@
     const byXpath = xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
     if (byXpath) return byXpath;
 
-    const COMPOSE_LABELS = ['compose', 'new message', 'new mail', '新規メッセージを作成', '作成',
-      'nouveau message', 'verfassen', 'redactar', '新建', '撰写', 'scrivi', 'nieuw bericht'];
+    const COMPOSE_LABELS = [
+      'compose', 'new message', 'new mail', 'new email',
+      'nouveau message', 'nouveau courrier', 'rédiger',      // French
+      'verfassen', 'neue nachricht', 'neue e-mail',           // German
+      'redactar', 'nuevo mensaje', 'nuevo correo',            // Spanish
+      'scrivi', 'nuovo messaggio',                            // Italian
+      'nieuw bericht', 'nieuwe e-mail',                       // Dutch
+      'nova mensagem', 'redigir',                             // Portuguese
+      'ny besked', 'skriv',                                   // Danish/Swedish
+      'ny melding',                                           // Norwegian
+      'uusi viesti', 'kirjoita',                              // Finnish
+      'новое сообщение', 'написать',                          // Russian
+      'új üzenet',                                            // Hungarian
+      'nowa wiadomość',                                       // Polish
+      'yeni mesaj', 'oluştur',                                // Turkish
+      'رسالة جديدة', 'إنشاء',                                // Arabic
+      '新規メッセージを作成', '作成', 'メールを作成',          // Japanese
+      '新建', '撰写', '新邮件',                                // Chinese Simplified
+      '新增', '撰寫',                                          // Chinese Traditional
+      '새 메시지', '작성',                                     // Korean
+    ];
     const byLabel = Array.from(document.querySelectorAll('ui-button, button, [role="button"]'))
       .find(b => {
         const lbl = (b.getAttribute('aria-label') || '').toLowerCase().trim();
@@ -215,7 +248,9 @@
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => {
         const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
-        return lbl.includes('send') || lbl.includes('送信') || lbl.includes('envoyer') || lbl.includes('senden') || lbl.includes('enviar');
+        const SEND_LABELS = ['send','送信','envoyer','senden','enviar','invia','verzenden',
+          'enviar','skicka','send','отправить','küldés','wyślij','gönder','إرسال','发送','傳送','보내기'];
+        return SEND_LABELS.some(s => lbl.includes(s));
       });
 
     if (!sendBtn) {
@@ -242,21 +277,23 @@
     click(sendBtn);
     await sleep(500);
 
-    // Handle "no subject" dialog
-    const sendAnywayBtn = Array.from(document.querySelectorAll('button, ui-button'))
-      .find(b => /send anyway/i.test((b.textContent || b.getAttribute('aria-label') || '')));
-    if (sendAnywayBtn) {
-      click(sendAnywayBtn);
-      await sleep(300);
-    }
-
-    // Detect "invalid email address" dialog
-    const invalidEmailDialog = Array.from(document.querySelectorAll('button'))
-      .find(b => /^ok$/i.test((b.textContent || '').trim()));
-    const dialogText = document.body.innerText || '';
-    if (invalidEmailDialog && /invalid.*email|addresses.*invalid/i.test(dialogText)) {
-      try { invalidEmailDialog.click(); } catch(e) {}
-      return { error: 'Invalid email address rejected by iCloud' };
+    // Handle modal dialogs (language-agnostic: click first visible button in any overlay dialog)
+    await sleep(300);
+    const dialogs = Array.from(document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], .dialog, .modal, ui-dialog, ui-alert'
+    )).filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+    for (const dlg of dialogs) {
+      const dlgText = (dlg.innerText || dlg.textContent || '').toLowerCase();
+      const btns = Array.from(dlg.querySelectorAll('button, ui-button, [role="button"]'))
+        .filter(b => { try { return b.offsetParent !== null; } catch(e) { return false; } });
+      // If dialog looks like an "invalid email" error — dismiss and report
+      if (/invalid|error|incorrect|wrong|ungültig|invalide|无效|無効|inválid/i.test(dlgText) &&
+          /email|address|adresse|アドレス|邮件|메일/i.test(dlgText)) {
+        if (btns[0]) { try { btns[0].click(); } catch(e) {} }
+        return { error: 'Invalid email address rejected by iCloud' };
+      }
+      // Otherwise treat as "send anyway" / confirmation — click first button
+      if (btns[0]) { click(btns[0]); await sleep(300); }
     }
 
     return { ok: true };
