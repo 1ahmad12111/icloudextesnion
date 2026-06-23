@@ -67,14 +67,29 @@ function detectIds(html) {
   const invMatch    = plain.match(/(?:Invoice|Order)\s+ID\s*[:\s]+([A-Z0-9\-\._]*\d[A-Z0-9\-\._]*)/i);
   const dateMatch   = plain.match(/Transaction\s+[Dd]ate\s*[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
   const sellerMatch = plain.match(/Seller\s*[:\s]+([A-Za-z0-9 &.,'\-]{3,60}?)\s*(?:Instructions|\(|$)/i);
+
+  const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+  // Visible email: what the recipient actually sees (plain text, handles split tags)
+  const emailMatchVisible = plain.match(EMAIL_RE);
+  // Href email: may differ from visible (e.g. abbreviated href vs full display address)
   const fullDecoded = _decodeEntities(html);
-  const emailMatch  = fullDecoded.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/);
+  const emailMatchHref = fullDecoded.match(EMAIL_RE);
+
+  // Prefer the visible email as the primary value; store href separately for href replacement
+  const emailValue = emailMatchVisible ? emailMatchVisible[0].trim()
+                   : emailMatchHref    ? emailMatchHref[0].trim()
+                   : null;
+  const emailHref  = emailMatchHref && emailMatchHref[0].trim() !== emailValue
+                   ? emailMatchHref[0].trim()
+                   : null;
+
   return {
     txnValue:   txnMatch    ? txnMatch[1].trim()    : null,
     invValue:   invMatch    ? invMatch[1].trim()     : null,
     dateValue:  dateMatch   ? dateMatch[1].trim()    : null,
     sellerName: sellerMatch ? sellerMatch[1].trim()  : null,
-    emailValue: emailMatch  ? emailMatch[0].trim()   : null,
+    emailValue,
+    emailHref,
   };
 }
 
