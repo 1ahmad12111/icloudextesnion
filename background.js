@@ -51,6 +51,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   chunkSize  = chunkSize  || 10;
   chunkDelay = chunkDelay || 5;
 
+  resetEmailDedup();
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
   if (chunkEnabled)
     broadcast({ type: 'log', text: 'Chunk mode ON — ' + Math.ceil(total / chunkSize) + ' chunks of ' + chunkSize + ', ' + chunkDelay + 's pause between chunks.', level: 'info' });

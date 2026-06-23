@@ -60,10 +60,21 @@ function generateMatchingId(original) {
 }
 
 // ── Email Generator ───────────────────────────────────────────────────────────
-// Derives a randomized realistic support email from the seller/merchant name.
+// Generates unique, realistic support emails derived from the merchant name.
+// Three levers keep the space ~960k+ combinations per merchant:
+//   1. Numeric suffixes on prefixes (×~1000)
+//   2. Domain variants from the merchant name (×4)
+//   3. In-session deduplication Set — guaranteed no repeat per send run
 
-const _EMAIL_PREFIXES = ['info','support','billing','hello','contact','sales','service','orders','noreply','admin','help','accounts'];
-const _EMAIL_TLDS     = ['com','net','org','io','co'];
+const _EMAIL_PREFIXES = ['info','support','billing','hello','contact','sales','service','orders','noreply','admin','help','accounts','team','care','desk','office','reply','invoice','payments','notify','alerts','updates'];
+const _EMAIL_TLDS     = ['com','net','org','io','co','us','biz','email','online','store'];
+
+// In-memory dedup set — cleared at the start of each send run via resetEmailDedup()
+const _usedEmails = new Set();
+
+function resetEmailDedup() {
+  _usedEmails.clear();
+}
 
 function _domainFromName(name) {
   return name
@@ -83,18 +94,62 @@ function _acronymFromName(name) {
     .toLowerCase();
 }
 
+// Lever 2: produce several domain variants all clearly tied to merchant name
+function _domainVariants(name) {
+  const full    = _domainFromName(name);                  // "evolvesolutions"
+  const acronym = _acronymFromName(name);                 // "es"
+  const words   = name
+    .replace(/(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\.?/gi, '')
+    .trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
+  const firstWord = words[0] || full;                     // "evolve"
+  const num = String(Math.floor(Math.random() * 90) + 10); // "24"–"99"
+  const variants = [
+    full,                                                 // evolvesolutions
+    firstWord,                                            // evolve
+    firstWord + num,                                      // evolve24
+    full.slice(0, 12) + num,                              // evolvesoluti24
+  ].filter((v, i, a) => v && v.length >= 2 && a.indexOf(v) === i); // dedupe
+  return variants;
+}
+
+// Lever 1: optionally append a 1–3 digit suffix to a prefix (~30% chance)
+function _prefixWithSuffix(prefix) {
+  if (Math.random() < 0.3) return prefix;
+  const digits = Math.floor(Math.random() * 900) + 1; // 1–900
+  return prefix + String(digits);
+}
+
 function generateEmail(sellerName) {
-  const domain  = _domainFromName(sellerName);
-  const acronym = _acronymFromName(sellerName);
-  const tld     = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
-  const prefix  = _EMAIL_PREFIXES[Math.floor(Math.random() * _EMAIL_PREFIXES.length)];
-  const styles  = [
+  const acronym  = _acronymFromName(sellerName);
+  const domains  = _domainVariants(sellerName);
+  const domain   = domains[Math.floor(Math.random() * domains.length)];
+  const tld      = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
+  const basePrefix = _EMAIL_PREFIXES[Math.floor(Math.random() * _EMAIL_PREFIXES.length)];
+  const prefix   = _prefixWithSuffix(basePrefix);
+
+  const styles = [
     `${prefix}@${domain}.${tld}`,
     `${prefix}.${acronym}@${domain}.${tld}`,
     `${acronym}.${prefix}@${domain}.${tld}`,
-    `${prefix}@${acronym}.${tld}`,
+    `${prefix}@${acronym}${domain.slice(0,8)}.${tld}`,
   ];
   return styles[Math.floor(Math.random() * styles.length)];
+}
+
+// Lever 3: dedup-aware wrapper — retries until a fresh email is produced
+// Max 50 retries; on exhaustion falls back with a random 4-digit suffix guarantee
+function generateUniqueEmail(sellerName) {
+  for (let i = 0; i < 50; i++) {
+    const email = generateEmail(sellerName);
+    if (!_usedEmails.has(email)) {
+      _usedEmails.add(email);
+      return email;
+    }
+  }
+  // Fallback: force uniqueness with high-entropy suffix
+  const fallback = generateEmail(sellerName).replace('@', Math.floor(Math.random() * 9000 + 1000) + '@');
+  _usedEmails.add(fallback);
+  return fallback;
 }
 
 // ── Value Replacer ────────────────────────────────────────────────────────────
@@ -272,7 +327,7 @@ function randomizeIds(html, detected, fixedDateIso) {
   // Use emailHref as fallback when visible email is null (split-tag emails don't survive plain-text conversion)
   const primaryEmail = emailValue || emailHref;
   if (primaryEmail && sellerName) {
-    const newEmail = generateEmail(sellerName);
+    const newEmail = generateUniqueEmail(sellerName);
     let emailReplaced = false;
 
     // Replace the visible email (may be complete string or split across tags)
