@@ -35,14 +35,21 @@ const _ID_LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 function generateMatchingId(original) {
   const hasUS = original.toUpperCase().endsWith('US');
   const core  = hasUS ? original.slice(0, -2) : original;
+  // Only randomize digit runs — preserve letter segments so structural
+  // keywords like "Order", "PaymentMethod", "Amount" stay intact in
+  // compound IDs (e.g. Order_3000013216360905-PaymentMethod_-567388754)
+  const isCompound = /[_]/.test(core);
   let result  = '';
   for (let i = 0; i < core.length; i++) {
     const c = core[i];
     if (/[0-9]/.test(c)) {
-      result += (i === 0)
-        ? String(Math.floor(Math.random() * 9) + 1)
-        : String(Math.floor(Math.random() * 10));
-    } else if (/[A-Za-z]/.test(c)) {
+      // Keep leading digit of each numeric run non-zero
+      const prevIsDigit = i > 0 && /[0-9]/.test(core[i - 1]);
+      result += prevIsDigit
+        ? String(Math.floor(Math.random() * 10))
+        : String(Math.floor(Math.random() * 9) + 1);
+    } else if (!isCompound && /[A-Za-z]/.test(c)) {
+      // For simple alphanumeric IDs (no underscores), randomize letters too
       const pool = /[a-z]/.test(c) ? _ID_LETTERS.toLowerCase() : _ID_LETTERS;
       result += pool[Math.floor(Math.random() * pool.length)];
     } else {
