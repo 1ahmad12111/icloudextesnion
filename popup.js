@@ -212,7 +212,7 @@ function updateChunkHint() {
   const delay = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
   const chunks = n > 0 ? Math.ceil(n / size) : '?';
   chunkHintEl.textContent = n > 0
-    ? chunks + ' chunk' + (chunks !== 1 ? 's' : '') + ' of up to ' + size + ' emails — ' + delay + ' min pause between chunks'
+    ? chunks + ' chunk' + (chunks !== 1 ? 's' : '') + ' of up to ' + size + ' emails — ' + delay + 's pause between chunks'
     : 'Enter emails above to see chunk preview';
 }
 
@@ -388,12 +388,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     progressText.textContent = msg.sent + ' / ' + msg.total;
   }
   if (msg.type === 'chunkCountdown') {
-    const m = Math.floor(msg.remaining / 60);
-    const s = msg.remaining % 60;
-    const total = msg.chunkDelay;
-    const pct   = Math.round(((total - msg.remaining) / total) * 100);
+    const pct = Math.round(((msg.chunkDelay - msg.remaining) / msg.chunkDelay) * 100);
     progressBar.style.width = pct + '%';
-    progressText.textContent = 'Chunk pause — ' + m + 'm ' + String(s).padStart(2,'0') + 's remaining';
+    progressText.textContent = 'Chunk pause — ' + msg.remaining + 's remaining';
   }
   if (msg.type === 'log')   addLog(msg.text, msg.level || 'info');
   if (msg.type === 'done')  { isSending = false; setUI(false); addLog('Done! Sent ' + msg.sent + ' of ' + msg.total + ' emails.', 'ok'); }
