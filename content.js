@@ -40,28 +40,41 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  // Finds a field by its visible label text (e.g. "To", "Subject")
-  function findFieldByLabelText(labelText) {
-    const re = new RegExp('^' + labelText + ':?\\s*$', 'i');
-    const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
-      .filter(el => re.test((el.textContent || '').trim()));
-    for (const label of labels) {
-      const id = label.id;
-      if (id) {
-        const inp = document.querySelector('[aria-labelledby="' + id + '"]');
-        if (inp) return inp;
-        for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
-          if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
-          if (cel.shadowRoot) {
-            const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
-            if (si) return si;
+  // Localized label translations for iCloud's compose fields across all supported locales
+  const FIELD_LABELS = {
+    To: ['To','À','宛先','An','Para','A','Aan','Till','До','Til','До','Кому',
+         'Vastaanottaja','Aan','İlgili','إلى','收件人','받는 사람','Kepada','ถึง','Đến'],
+    Subject: ['Subject','Objet','件名','Betreff','Asunto','Oggetto','Onderwerp','Assunto',
+              'Ämne','Тема','Emne','Тема','Aihe','Konu','الموضوع','主题','제목','Subjek',
+              'หัวเรื่อง','Chủ đề'],
+  };
+
+  // Finds a field by its visible label text, trying all localized candidates
+  function findFieldByLabelText(labelKey) {
+    const candidates = FIELD_LABELS[labelKey] || [labelKey];
+    for (const labelText of candidates) {
+      const escaped = labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp('^' + escaped + ':?\\s*$', 'i');
+      const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
+        .filter(el => re.test((el.textContent || '').trim()));
+      for (const label of labels) {
+        const id = label.id;
+        if (id) {
+          const inp = document.querySelector('[aria-labelledby="' + id + '"]');
+          if (inp) return inp;
+          for (const cel of document.querySelectorAll('ui-autocomplete-field, ui-text-field')) {
+            if ((cel.getAttribute('aria-labelledby') || '') === id) return cel;
+            if (cel.shadowRoot) {
+              const si = cel.shadowRoot.querySelector('[aria-labelledby="' + id + '"], input');
+              if (si) return si;
+            }
           }
         }
-      }
-      const parent = label.closest('[class*="field"], [class*="row"], li, div') || label.parentElement;
-      if (parent) {
-        const si = parent.querySelector('input, [contenteditable], ui-autocomplete-field');
-        if (si && si !== label) return si;
+        const parent = label.closest('[class*="field"], [class*="row"], li, div') || label.parentElement;
+        if (parent) {
+          const si = parent.querySelector('input, [contenteditable], ui-autocomplete-field');
+          if (si && si !== label) return si;
+        }
       }
     }
     return null;
@@ -86,8 +99,22 @@
     const byXpath = xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
     if (byXpath) return byXpath;
 
-    const COMPOSE_LABELS = ['compose', 'new message', 'new mail', '新規メッセージを作成', '作成',
-      'nouveau message', 'verfassen', 'redactar', '新建', '撰写', 'scrivi', 'nieuw bericht'];
+    const COMPOSE_LABELS = [
+      'compose', 'new message', 'new mail', 'new email',
+      'nouveau message', 'rédiger',
+      'verfassen', 'neue nachricht', 'neue e-mail', 'neue e-mail erstellen',
+      'redactar', 'nuevo mensaje',
+      'scrivi', 'nuovo messaggio',
+      'nieuw bericht', 'nieuwe e-mail',
+      'nova mensagem',
+      'ny besked', 'skriv', 'ny melding',
+      'новое сообщение', 'написать',
+      'yeni mesaj', 'oluştur',
+      'إنشاء', 'رسالة جديدة',
+      '新規メッセージを作成', 'メールを作成', '作成',
+      '新建', '撰写', '新邮件', '撰寫',
+      '새 메시지', '작성',
+    ];
     const byLabel = Array.from(document.querySelectorAll('ui-button, button, [role="button"]'))
       .find(b => {
         const lbl = (b.getAttribute('aria-label') || '').toLowerCase().trim();
@@ -215,7 +242,10 @@
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => {
         const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
-        return lbl.includes('send') || lbl.includes('送信') || lbl.includes('envoyer') || lbl.includes('senden') || lbl.includes('enviar');
+        const SEND_LABELS = ['send','nachricht senden','送信','envoyer','senden','enviar',
+          'invia','verzenden','enviar','skicka','отправить','küldés','wyślij','gönder',
+          'إرسال','发送','傳送','보내기'];
+        return SEND_LABELS.some(s => lbl.includes(s));
       });
 
     if (!sendBtn) {
@@ -242,21 +272,21 @@
     click(sendBtn);
     await sleep(500);
 
-    // Handle "no subject" dialog
-    const sendAnywayBtn = Array.from(document.querySelectorAll('button, ui-button'))
-      .find(b => /send anyway/i.test((b.textContent || b.getAttribute('aria-label') || '')));
-    if (sendAnywayBtn) {
-      click(sendAnywayBtn);
-      await sleep(300);
-    }
-
-    // Detect "invalid email address" dialog
-    const invalidEmailDialog = Array.from(document.querySelectorAll('button'))
-      .find(b => /^ok$/i.test((b.textContent || '').trim()));
-    const dialogText = document.body.innerText || '';
-    if (invalidEmailDialog && /invalid.*email|addresses.*invalid/i.test(dialogText)) {
-      try { invalidEmailDialog.click(); } catch(e) {}
-      return { error: 'Invalid email address rejected by iCloud' };
+    // Handle modal dialogs (language-agnostic: inspect visible overlays)
+    await sleep(300);
+    const dialogs = Array.from(document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], .dialog, .modal, ui-dialog, ui-alert'
+    )).filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+    for (const dlg of dialogs) {
+      const dlgText = (dlg.innerText || dlg.textContent || '').toLowerCase();
+      const btns = Array.from(dlg.querySelectorAll('button, ui-button, [role="button"]'))
+        .filter(b => { try { return b.offsetParent !== null; } catch(e) { return false; } });
+      if (/invalid|error|incorrect|wrong|ungültig|invalide|无效|無効|inválid/i.test(dlgText) &&
+          /email|address|adresse|アドレス|邮件|메일/i.test(dlgText)) {
+        if (btns[0]) { try { btns[0].click(); } catch(e) {} }
+        return { error: 'Invalid email address rejected by iCloud' };
+      }
+      if (btns[0]) { click(btns[0]); await sleep(300); }
     }
 
     return { ok: true };
