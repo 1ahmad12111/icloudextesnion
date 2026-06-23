@@ -20,6 +20,11 @@ const idRandomizePanelEl = document.getElementById('idRandomizePanel');
 const idDetectedBoxEl = document.getElementById('idDetectedBox');
 const idDateInputEl   = document.getElementById('idDateInput');
 const idDateTodayBtn  = document.getElementById('idDateToday');
+const chunkEnabledEl  = document.getElementById('chunkEnabled');
+const chunkPanelEl    = document.getElementById('chunkPanel');
+const chunkSizeEl     = document.getElementById('chunkSize');
+const chunkDelayEl    = document.getElementById('chunkDelay');
+const chunkHintEl     = document.getElementById('chunkHint');
 const startBtn        = document.getElementById('startBtn');
 const stopBtn         = document.getElementById('stopBtn');
 const progressCard    = document.getElementById('progressCard');
@@ -135,7 +140,8 @@ function renderIdDetectedBox(detected) {
 chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
-  'idRandomize', 'idDetected', 'fixedDateIso'
+  'idRandomize', 'idDetected', 'fixedDateIso',
+  'chunkEnabled', 'chunkSize', 'chunkDelay'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -152,6 +158,9 @@ chrome.storage.local.get([
   if (data.idRandomize) { idRandomizeEl.checked = true; toggleIdPanel(); }
   if (data.idDetected)  { idDetected = data.idDetected; renderIdDetectedBox(idDetected); }
   if (data.fixedDateIso) idDateInputEl.value = data.fixedDateIso;
+  if (data.chunkEnabled) { chunkEnabledEl.checked = true; toggleChunkPanel(); }
+  if (data.chunkSize)  chunkSizeEl.value  = data.chunkSize;
+  if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -173,6 +182,9 @@ function saveDraft() {
     idRandomize:   idRandomizeEl.checked,
     idDetected,
     fixedDateIso:  idDateInputEl.value || null,
+    chunkEnabled:  chunkEnabledEl.checked,
+    chunkSize:     Number(chunkSizeEl.value) || 10,
+    chunkDelay:    Number(chunkDelayEl.value) || 5,
   });
 }
 
@@ -188,6 +200,9 @@ entityRateEl.addEventListener('input', () => {
 idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
 idDateInputEl.addEventListener('change', saveDraft);
 idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
+chunkEnabledEl.addEventListener('change', () => { toggleChunkPanel(); saveDraft(); });
+chunkSizeEl.addEventListener('input',  () => { updateChunkHint(); saveDraft(); });
+chunkDelayEl.addEventListener('input', () => { updateChunkHint(); saveDraft(); });
 
 // ── Toggle helpers ────────────────────────────────────────────────────────────
 
@@ -201,6 +216,21 @@ function toggleIdPanel() {
   idRandomizePanelEl.style.display = idRandomizeEl.checked ? '' : 'none';
 }
 
+function toggleChunkPanel() {
+  chunkPanelEl.style.display = chunkEnabledEl.checked ? 'flex' : 'none';
+  if (chunkEnabledEl.checked) updateChunkHint();
+}
+
+function updateChunkHint() {
+  const n = getEmails().length;
+  const size  = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
+  const delay = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
+  const chunks = n > 0 ? Math.ceil(n / size) : '?';
+  chunkHintEl.textContent = n > 0
+    ? chunks + ' chunk' + (chunks !== 1 ? 's' : '') + ' of up to ' + size + ' emails — ' + delay + 's pause between chunks'
+    : 'Enter emails above to see chunk preview';
+}
+
 // ── Email list helpers ────────────────────────────────────────────────────────
 
 function getEmails() {
@@ -209,6 +239,7 @@ function getEmails() {
 function updateCount() {
   const n = getEmails().length;
   emailCountEl.textContent = n + ' email' + (n !== 1 ? 's' : '');
+  if (chunkEnabledEl.checked) updateChunkHint();
 }
 emailListEl.addEventListener('input', updateCount);
 
@@ -327,9 +358,12 @@ async function startSending() {
   const isHtml     = isHtmlEl.checked;
   const delay      = Math.max(1, parseInt(delayEl.value, 10) || 5);
   const batchSize  = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
-  const randomize  = randomizeEl.checked;
-  const idRandomize = idRandomizeEl.checked;
+  const randomize    = randomizeEl.checked;
+  const idRandomize  = idRandomizeEl.checked;
   const fixedDateIso = idDateInputEl.value || null;
+  const chunkEnabled = chunkEnabledEl.checked;
+  const chunkSize    = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
+  const chunkDelay   = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
@@ -356,7 +390,8 @@ async function startSending() {
     action: 'startSending',
     emails, subjects, bodies,
     isHtml: useHtml, delay, batchSize,
-    randomize, idRandomize, idDetected, fixedDateIso
+    randomize, idRandomize, idDetected, fixedDateIso,
+    chunkEnabled, chunkSize, chunkDelay
   });
 }
 
@@ -366,6 +401,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'progress') {
     progressBar.style.width = Math.round((msg.sent / msg.total) * 100) + '%';
     progressText.textContent = msg.sent + ' / ' + msg.total;
+  }
+  if (msg.type === 'chunkCountdown') {
+    const pct = Math.round(((msg.chunkDelay - msg.remaining) / msg.chunkDelay) * 100);
+    progressBar.style.width = pct + '%';
+    progressText.textContent = 'Chunk pause — ' + msg.remaining + 's remaining';
   }
   if (msg.type === 'log')   addLog(msg.text, msg.level || 'info');
   if (msg.type === 'done')  { isSending = false; setUI(false); addLog('Done! Sent ' + msg.sent + ' of ' + msg.total + ' emails.', 'ok'); }

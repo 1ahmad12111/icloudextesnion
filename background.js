@@ -45,11 +45,15 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay }) {
   const total = emails.length;
-  batchSize = batchSize || 10;
+  batchSize  = batchSize  || 10;
+  chunkSize  = chunkSize  || 10;
+  chunkDelay = chunkDelay || 5;
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
+  if (chunkEnabled)
+    broadcast({ type: 'log', text: 'Chunk mode ON — ' + Math.ceil(total / chunkSize) + ' chunks of ' + chunkSize + ', ' + chunkDelay + 's pause between chunks.', level: 'info' });
   if (subjects.length > 1)
     broadcast({ type: 'log', text: subjects.length + ' subject lines loaded — will rotate every batch.', level: 'info' });
   if (randomize)
@@ -87,83 +91,110 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   }
   broadcast({ type: 'log', text: 'Found mail UI in frame ' + mailFrameId + '!', level: 'ok' });
 
-  for (const email of emails) {
+  // Build list of work items: in chunk mode each item is a group of emails;
+  // in normal mode each item is a single email (group of 1).
+  const groups = [];
+  if (chunkEnabled) {
+    for (let i = 0; i < emails.length; i += chunkSize) {
+      groups.push(emails.slice(i, i + chunkSize));
+    }
+  } else {
+    emails.forEach(e => groups.push([e]));
+  }
+  const totalGroups = groups.length;
+
+  for (let gi = 0; gi < groups.length; gi++) {
     if (stopRequested) break;
-    broadcast({ type: 'log', text: 'Sending to ' + email + '...', level: 'info' });
+    const group = groups[gi];
+
+    broadcast({ type: 'log', text: chunkEnabled
+      ? 'Chunk ' + (gi + 1) + '/' + totalGroups + ' — sending to ' + group.length + ' recipients...'
+      : 'Sending to ' + group[0] + '...',
+      level: 'info' });
 
     try {
-      // Rotate subject: same index logic as body version rotation
-      const subjectIndex = Math.floor(sent / batchSize) % subjects.length;
+      // Rotate subject and HTML version by group index
+      const subjectIndex = Math.floor(gi / batchSize) % subjects.length;
       const subject = subjects[subjectIndex];
       if (subjects.length > 1)
         broadcast({ type: 'log', text: 'Subject #' + (subjectIndex + 1) + ': "' + subject + '"', level: 'info' });
 
-      // Rotate HTML version
-      const versionIndex = Math.floor(sent / batchSize) % bodies.length;
+      const versionIndex = Math.floor(gi / batchSize) % bodies.length;
       let body = bodies[versionIndex];
       if (bodies.length > 1)
         broadcast({ type: 'log', text: 'HTML version ' + (versionIndex + 1) + ' of ' + bodies.length + '.', level: 'info' });
 
-      // Randomize HTML fingerprint for this specific email
       if (randomize && isHtml) {
         body = randomizeHtml(body);
         broadcast({ type: 'log', text: 'HTML randomized.', level: 'info' });
       }
 
-      // Randomize Transaction ID, Invoice ID, date and support email
       if (idRandomize && idDetected) {
         const { out, log } = randomizeIds(body, idDetected, fixedDateIso);
         body = out;
         log.forEach(l => broadcast({ type: 'log', text: l, level: 'info' }));
       }
 
-      // Step 1: Open compose and focus To field
-      const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: email });
+      // Step 1: Open compose — focus To field using first recipient
+      const composeResult = await sendToFrame(mailFrameId, { action: 'openCompose', to: group[0] });
       if (composeResult && composeResult.error) throw new Error(composeResult.error);
       broadcast({ type: 'log', text: 'Compose open, To focused.', level: 'info' });
 
-      // Step 2: Type email via debugger (trusted, works with iCloud controlled inputs)
-      await sleep(100);
-      await sendDebuggerType(mailTabId, email);
-      broadcast({ type: 'log', text: 'To address typed.', level: 'info' });
+      // Step 2: Type all recipients into the To field
+      for (const toEmail of group) {
+        await sleep(100);
+        await sendDebuggerType(mailTabId, toEmail);
+        await sleep(300);
+        await sendDebuggerEnter(mailTabId);
+        broadcast({ type: 'log', text: 'Added: ' + toEmail, level: 'info' });
+        await sleep(200);
+      }
+      broadcast({ type: 'log', text: group.length + ' recipient(s) confirmed.', level: 'info' });
 
-      // Step 3: Fire trusted Enter to confirm the email token
-      await sleep(300);
-      await sendDebuggerEnter(mailTabId);
-      broadcast({ type: 'log', text: 'Token confirmed.', level: 'info' });
-
-      // Step 4: Fill Subject
+      // Step 3: Fill Subject
       await sleep(800);
       const subjectResult = await sendToFrame(mailFrameId, { action: 'fillSubject', subject });
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
-      // Step 5: Find RTE iframe
+      // Step 4: Find RTE iframe and fill body
       const rteFrameId = await findRteFrame(4000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
 
-      // Step 6: Fill body
       const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body, isHtml });
       if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
       broadcast({ type: 'log', text: 'Body filled.', level: 'info' });
 
       await sleep(500);
 
-      // Step 7: Click Send
+      // Step 5: Click Send
       const sendResult = await sendToFrame(mailFrameId, { action: 'clickSend' });
       if (sendResult && sendResult.error) throw new Error(sendResult.error);
 
-      sent++;
-      broadcast({ type: 'progress', sent, total });
-      broadcast({ type: 'log', text: '✓ Sent to ' + email, level: 'ok' });
+      sent += group.length;
+      broadcast({ type: 'progress', sent: Math.min(sent, total), total });
+      broadcast({ type: 'log', text: '✓ Sent to ' + group.join(', '), level: 'ok' });
     } catch (err) {
-      broadcast({ type: 'log', text: '✗ Failed for ' + email + ': ' + err.message, level: 'err' });
+      broadcast({ type: 'log', text: '✗ Failed for chunk ' + (gi + 1) + ': ' + err.message, level: 'err' });
     }
 
-    if (!stopRequested && sent < total) {
-      broadcast({ type: 'log', text: 'Waiting ' + delay + 's...', level: 'info' });
-      await sleep(delay * 1000);
+    if (!stopRequested && gi < groups.length - 1) {
+      if (chunkEnabled) {
+        // Pause between chunks
+        broadcast({ type: 'log', text: '— Chunk ' + (gi + 1) + '/' + totalGroups + ' done. Pausing ' + chunkDelay + 's...', level: 'info' });
+        const chunkMs  = chunkDelay * 1000;
+        const chunkEnd = Date.now() + chunkMs;
+        while (Date.now() < chunkEnd) {
+          if (stopRequested) break;
+          const remaining = Math.ceil((chunkEnd - Date.now()) / 1000);
+          broadcast({ type: 'chunkCountdown', remaining, chunkDelay });
+          await sleep(Math.min(1000, chunkEnd - Date.now()));
+        }
+      } else {
+        broadcast({ type: 'log', text: 'Waiting ' + delay + 's...', level: 'info' });
+        await sleep(delay * 1000);
+      }
     }
   }
 
