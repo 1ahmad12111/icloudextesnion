@@ -45,11 +45,15 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay }) {
   const total = emails.length;
-  batchSize = batchSize || 10;
+  batchSize  = batchSize  || 10;
+  chunkSize  = chunkSize  || 10;
+  chunkDelay = chunkDelay || 5;
 
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
+  if (chunkEnabled)
+    broadcast({ type: 'log', text: 'Chunk mode ON — ' + Math.ceil(total / chunkSize) + ' chunks of ' + chunkSize + ', ' + chunkDelay + ' min pause between chunks.', level: 'info' });
   if (subjects.length > 1)
     broadcast({ type: 'log', text: subjects.length + ' subject lines loaded — will rotate every batch.', level: 'info' });
   if (randomize)
@@ -162,8 +166,23 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     }
 
     if (!stopRequested && sent < total) {
-      broadcast({ type: 'log', text: 'Waiting ' + delay + 's...', level: 'info' });
-      await sleep(delay * 1000);
+      // After completing a chunk, pause for chunkDelay minutes
+      if (chunkEnabled && sent % chunkSize === 0) {
+        const chunkNum = sent / chunkSize;
+        const totalChunks = Math.ceil(total / chunkSize);
+        broadcast({ type: 'log', text: '— Chunk ' + chunkNum + '/' + totalChunks + ' done. Pausing ' + chunkDelay + ' min before next chunk...', level: 'info' });
+        const chunkMs = chunkDelay * 60 * 1000;
+        const chunkEnd = Date.now() + chunkMs;
+        while (Date.now() < chunkEnd) {
+          if (stopRequested) break;
+          const remaining = Math.ceil((chunkEnd - Date.now()) / 1000);
+          broadcast({ type: 'chunkCountdown', remaining, chunkDelay: chunkDelay * 60 });
+          await sleep(Math.min(5000, chunkEnd - Date.now()));
+        }
+      } else {
+        broadcast({ type: 'log', text: 'Waiting ' + delay + 's...', level: 'info' });
+        await sleep(delay * 1000);
+      }
     }
   }
 
