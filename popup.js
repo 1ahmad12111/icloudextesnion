@@ -54,7 +54,7 @@ function detectIds(html) {
   const txnMatch    = plain.match(/Transaction\s+ID\s*[:\s]+([A-Z0-9\-\._]*\d[A-Z0-9\-\._]*)/i);
   const invMatch    = plain.match(/(?:Invoice|Order)\s+ID\s*[:\s]+([A-Z0-9\-\._]*\d[A-Z0-9\-\._]*)/i);
   const dateMatch   = plain.match(/Transaction\s+[Dd]ate\s*[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
-  const sellerMatch = plain.match(/(?:Seller|Merchant)\s*[:\s]+([A-Za-z0-9 &.,'\-]{3,60}?)\s*(?:Instructions|support|Transaction|\(|$)/i);
+  const sellerMatch = plain.match(/(?:Seller|Merchant|Vendor|Company|Payee|Store|Retailer|Business)\s*[:\s]+([A-Za-z0-9 &.,'\-]{3,60}?)\s*(?:Instructions|support|Transaction|Order|Invoice|\(|$)/i);
 
   const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
   // Visible email: what the recipient actually sees (plain text, handles split tags)

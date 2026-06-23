@@ -69,11 +69,13 @@ function generateMatchingId(original) {
 const _EMAIL_PREFIXES = ['info','support','billing','hello','contact','sales','service','orders','noreply','admin','help','accounts','team','care','desk','office','reply','invoice','payments','notify','alerts','updates'];
 const _EMAIL_TLDS     = ['com','net','org','io','co','us','biz','email','online','store'];
 
-// In-memory dedup set — cleared at the start of each send run via resetEmailDedup()
-const _usedEmails = new Set();
+// In-memory dedup sets — cleared at the start of each send run via resetEmailDedup()
+const _usedEmails  = new Set();
+const _usedDomains = new Set();
 
 function resetEmailDedup() {
   _usedEmails.clear();
+  _usedDomains.clear();
 }
 
 function _domainFromName(name) {
@@ -94,22 +96,58 @@ function _acronymFromName(name) {
     .toLowerCase();
 }
 
-// Lever 2: produce several domain variants all clearly tied to merchant name
-function _domainVariants(name) {
-  const full    = _domainFromName(name);                  // "evolvesolutions"
-  const acronym = _acronymFromName(name);                 // "es"
-  const words   = name
+// Domain composition parts — all neutral, professional-sounding
+const _DOM_PREFIXES = ['get','my','use','try','go','the','pay','one','top','pro','smart','fast','best','true','real','easy','now','new','just','next'];
+const _DOM_SUFFIXES = ['pay','shop','store','hub','hq','group','team','co','desk','pro','app','direct','online','central','plus','global','works','world','systems','services','support','billing','portal','connect','point','link','base','zone','space','place'];
+
+// Picks a merchant-related anchor. Returns array of 2–3 unique anchor strings,
+// each at least 3 chars, so every domain is recognisably tied to the merchant.
+function _anchors(name) {
+  const full      = _domainFromName(name);
+  const acronym   = _acronymFromName(name);
+  const words     = name
     .replace(/(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\.?/gi, '')
     .trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
-  const firstWord = words[0] || full;                     // "evolve"
-  const num = String(Math.floor(Math.random() * 90) + 10); // "24"–"99"
-  const variants = [
-    full,                                                 // evolvesolutions
-    firstWord,                                            // evolve
-    firstWord + num,                                      // evolve24
-    full.slice(0, 12) + num,                              // evolvesoluti24
-  ].filter((v, i, a) => v && v.length >= 2 && a.indexOf(v) === i); // dedupe
-  return variants;
+  const firstWord = words[0] || full;
+
+  const candidates = [full, firstWord, acronym].filter(a => a && a.length >= 3);
+  // Dedupe while preserving order
+  return [...new Set(candidates)];
+}
+
+// Build one candidate domain string — always contains the merchant anchor
+function _buildDomain(anchorList) {
+  const anchor  = anchorList[Math.floor(Math.random() * anchorList.length)];
+  const usePrefix  = Math.random() < 0.30;
+  const useSuffix  = Math.random() < 0.50;
+  const useNumber  = Math.random() < 0.40;
+  const prefix  = usePrefix  ? _DOM_PREFIXES[Math.floor(Math.random() * _DOM_PREFIXES.length)] : '';
+  const suffix  = useSuffix  ? _DOM_SUFFIXES[Math.floor(Math.random() * _DOM_SUFFIXES.length)] : '';
+  const number  = useNumber  ? String(Math.floor(Math.random() * 9999) + 1) : '';
+
+  // Assemble: [prefix-]anchor[-suffix][number]
+  let domain = '';
+  if (prefix) domain += prefix + '-';
+  domain += anchor;
+  if (suffix) domain += '-' + suffix;
+  domain += number;
+  return domain;
+}
+
+// Generate a domain that has never been used in this send run
+function _uniqueDomain(anchorList) {
+  for (let i = 0; i < 100; i++) {
+    const d = _buildDomain(anchorList);
+    if (!_usedDomains.has(d)) {
+      _usedDomains.add(d);
+      return d;
+    }
+  }
+  // Guaranteed-unique fallback: anchor + high-entropy number
+  const anchor   = anchorList[0];
+  const fallback = anchor + String(Math.floor(Math.random() * 900000) + 100000);
+  _usedDomains.add(fallback);
+  return fallback;
 }
 
 // Lever 1: optionally append a 1–3 digit suffix to a prefix (~30% chance)
@@ -120,24 +158,24 @@ function _prefixWithSuffix(prefix) {
 }
 
 function generateEmail(sellerName) {
-  const acronym  = _acronymFromName(sellerName);
-  const domains  = _domainVariants(sellerName);
-  const domain   = domains[Math.floor(Math.random() * domains.length)];
-  const tld      = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
+  const anchorList = _anchors(sellerName);
+  const domain     = _uniqueDomain(anchorList);           // always unique per send
+  const tld        = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
   const basePrefix = _EMAIL_PREFIXES[Math.floor(Math.random() * _EMAIL_PREFIXES.length)];
-  const prefix   = _prefixWithSuffix(basePrefix);
+  const prefix     = _prefixWithSuffix(basePrefix);
+  const acronym    = _acronymFromName(sellerName);
 
   const styles = [
     `${prefix}@${domain}.${tld}`,
     `${prefix}.${acronym}@${domain}.${tld}`,
     `${acronym}.${prefix}@${domain}.${tld}`,
-    `${prefix}@${acronym}${domain.slice(0,8)}.${tld}`,
+    `${prefix}@${domain}.${tld}`,                         // plain style repeated intentionally for weight
   ];
   return styles[Math.floor(Math.random() * styles.length)];
 }
 
-// Lever 3: dedup-aware wrapper — retries until a fresh email is produced
-// Max 50 retries; on exhaustion falls back with a random 4-digit suffix guarantee
+// Full dedup wrapper — domain is already unique (via _uniqueDomain inside generateEmail).
+// This Set guards the complete email address as a final safety net.
 function generateUniqueEmail(sellerName) {
   for (let i = 0; i < 50; i++) {
     const email = generateEmail(sellerName);
@@ -146,7 +184,7 @@ function generateUniqueEmail(sellerName) {
       return email;
     }
   }
-  // Fallback: force uniqueness with high-entropy suffix
+  // Guaranteed-unique fallback
   const fallback = generateEmail(sellerName).replace('@', Math.floor(Math.random() * 9000 + 1000) + '@');
   _usedEmails.add(fallback);
   return fallback;
