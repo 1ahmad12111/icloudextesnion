@@ -36,24 +36,7 @@ let htmlVersions = [];
 // Detected values from the first uploaded HTML version (used for ID randomization)
 let idDetected = null; // { txnValue, invValue, dateValue, sellerName, emailValue }
 
-// ── Entity encoding (applied once at upload time) ─────────────────────────────
-
-function _toEntity(ch) {
-  const code = ch.charCodeAt(0);
-  const hex = code.toString(16);
-  const forms = [`&#${code};`, `&#x${hex};`, `&#x${hex.toUpperCase()};`];
-  return forms[Math.floor(Math.random() * forms.length)];
-}
-function applyEntityEncoding(html, rate) {
-  return html.replace(/>([^<]+)</g, (match, text) => {
-    if (!text.trim()) return match;
-    const encoded = text.replace(/(&[a-zA-Z#][a-zA-Z0-9]*;)|([a-zA-Z0-9!?,.\-_])/g, (m, entity, ch) => {
-      if (entity) return entity;
-      return Math.random() < rate ? _toEntity(ch) : ch;
-    });
-    return '>' + encoded + '<';
-  });
-}
+// applyEntityEncoding() lives in randomizer.js (shared with background.js)
 
 // ── ID detection (runs in popup — has DOM access for decodeEntities) ──────────
 
@@ -280,10 +263,9 @@ htmlFileInputEl.addEventListener('change', () => {
         }
       }
 
-      if (entityEncodeEl.checked) {
-        const rate = Number(entityRateEl.value) / 100;
-        html = applyEntityEncoding(html, rate);
-      }
+      // Entity encoding is applied at send time (in background.js) so that
+      // per-send substitutions ({EMAIL}, ID randomization, email randomization)
+      // always run on clean HTML first.
       htmlVersions.push({ name: file.name, html });
       loaded++;
       if (loaded === files.length) { renderVersions(); saveDraft(); }
@@ -359,6 +341,8 @@ async function startSending() {
   const delay      = Math.max(1, parseInt(delayEl.value, 10) || 5);
   const batchSize  = Math.max(1, parseInt(batchSizeEl.value, 10) || 10);
   const randomize    = randomizeEl.checked;
+  const entityEncode = entityEncodeEl.checked;
+  const entityRate   = Number(entityRateEl.value) / 100;
   const idRandomize  = idRandomizeEl.checked;
   const fixedDateIso = idDateInputEl.value || null;
   const chunkEnabled = chunkEnabledEl.checked;
@@ -390,7 +374,8 @@ async function startSending() {
     action: 'startSending',
     emails, subjects, bodies,
     isHtml: useHtml, delay, batchSize,
-    randomize, idRandomize, idDetected, fixedDateIso,
+    randomize, entityEncode, entityRate,
+    idRandomize, idDetected, fixedDateIso,
     chunkEnabled, chunkSize, chunkDelay
   });
 }

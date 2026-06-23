@@ -45,7 +45,7 @@ async function sendDebuggerEnter(tabId) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay }) {
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
@@ -60,6 +60,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     broadcast({ type: 'log', text: 'HTML randomizer ON — structural mutations per email.', level: 'info' });
   if (idRandomize)
     broadcast({ type: 'log', text: 'ID randomizer ON — Transaction ID, Invoice ID, date and email randomized per email.', level: 'info' });
+  if (entityEncode)
+    broadcast({ type: 'log', text: 'Entity encoding ON — applied at send time at ' + Math.round((entityRate || 0) * 100) + '% rate.', level: 'info' });
 
   let sent = 0;
 
@@ -159,6 +161,13 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
 
       // Replace {EMAIL} placeholder with the first recipient's address
       body = body.replace(/\{EMAIL\}/gi, group[0]);
+
+      // Apply entity encoding last — after all substitutions so placeholders
+      // and split-tag email text nodes are still plain text when matched
+      if (entityEncode && isHtml) {
+        body = applyEntityEncoding(body, entityRate || 0.4);
+        broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
+      }
 
       // Step 4: Find RTE iframe and fill body
       const rteFrameId = await findRteFrame(4000);

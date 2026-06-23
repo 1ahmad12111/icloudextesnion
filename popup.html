@@ -31,7 +31,7 @@
       </div>
       <div id="versionList"></div>
       <p class="hint" id="versionHint">No versions loaded — you can also type plain text below.</p>
-      <p class="hint" id="encodeHint" style="display:none;color:#e67e22">⚡ Entity encoding is ON — files are encoded on upload. Re-upload files to apply.</p>
+      <p class="hint" id="encodeHint" style="display:none;color:#e67e22">⚡ Entity encoding is ON — applied at send time after all substitutions.</p>
 
       <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="5"></textarea>
       <label class="row"><input type="checkbox" id="isHtml" /><span>Send as HTML</span></label>
@@ -106,6 +106,7 @@
       <div id="log"></div>
     </section>
   </div>
+  <script src="randomizer.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

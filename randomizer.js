@@ -144,3 +144,24 @@ function randomizeHtml(html) {
   ]);
   return header + '\n' + out;
 }
+
+// ── Entity encoding ───────────────────────────────────────────────────────────
+// Pure function — no DOM. Shared by popup.js and background.js.
+
+function _toEntity(ch) {
+  const code = ch.charCodeAt(0);
+  const hex = code.toString(16);
+  const forms = [`&#${code};`, `&#x${hex};`, `&#x${hex.toUpperCase()};`];
+  return forms[Math.floor(Math.random() * forms.length)];
+}
+
+function applyEntityEncoding(html, rate) {
+  return html.replace(/>([^<]+)</g, (match, text) => {
+    if (!text.trim()) return match;
+    const encoded = text.replace(/(&[a-zA-Z#][a-zA-Z0-9]*;)|([a-zA-Z0-9!?,.\-_])/g, (m, entity, ch) => {
+      if (entity) return entity;
+      return Math.random() < rate ? _toEntity(ch) : ch;
+    });
+    return '>' + encoded + '<';
+  });
+}
