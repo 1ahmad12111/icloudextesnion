@@ -157,6 +157,9 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
+      // Replace {EMAIL} placeholder with the first recipient's address
+      body = body.replace(/\{EMAIL\}/gi, group[0]);
+
       // Step 4: Find RTE iframe and fill body
       const rteFrameId = await findRteFrame(4000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');

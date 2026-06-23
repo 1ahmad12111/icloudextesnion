@@ -269,17 +269,21 @@ function randomizeIds(html, detected, fixedDateIso) {
   }
 
   // Support email (randomized per email from seller name)
-  if (emailValue && sellerName) {
+  // Use emailHref as fallback when visible email is null (split-tag emails don't survive plain-text conversion)
+  const primaryEmail = emailValue || emailHref;
+  if (primaryEmail && sellerName) {
     const newEmail = generateEmail(sellerName);
     let emailReplaced = false;
 
     // Replace the visible email (may be complete string or split across tags)
-    const r = replaceValue(out, emailValue, newEmail, true);
-    out = r.out;
-    if (r.count > 0) emailReplaced = true;
+    if (emailValue) {
+      const r = replaceValue(out, emailValue, newEmail, true);
+      out = r.out;
+      if (r.count > 0) emailReplaced = true;
+    }
 
-    // Replace the href email if it differs from the visible one (e.g. abbreviated href)
-    if (emailHref && emailHref !== emailValue) {
+    // Replace the href email (always attempt — covers href="" attributes)
+    if (emailHref) {
       const rh = replaceValue(out, emailHref, newEmail, true);
       out = rh.out;
       if (rh.count > 0) emailReplaced = true;
@@ -288,17 +292,17 @@ function randomizeIds(html, detected, fixedDateIso) {
     // Split-tag pass: handles email fragmented across separate HTML tags
     // (e.g. <a>support@</a><a>domain</a><a>.com</a>) — normal string match misses these
     const beforeSplit = out;
-    out = _replaceEmailSplitTags(out, emailValue, newEmail);
+    out = _replaceEmailSplitTags(out, primaryEmail, newEmail);
     if (out !== beforeSplit) emailReplaced = true;
 
-    // Also run split-tag pass for href email if different
-    if (emailHref && emailHref !== emailValue) {
+    // Also run split-tag pass for href email if different from primary
+    if (emailHref && emailHref !== primaryEmail) {
       const beforeSplitH = out;
       out = _replaceEmailSplitTags(out, emailHref, newEmail);
       if (out !== beforeSplitH) emailReplaced = true;
     }
 
-    if (emailReplaced) log.push('Email: ' + emailValue + ' → ' + newEmail);
+    if (emailReplaced) log.push('Email: ' + primaryEmail + ' → ' + newEmail);
   }
 
   return { out, log };
