@@ -25,6 +25,12 @@ function stopKeepAlive() {
   chrome.alarms.clear('swKeepAlive');
 }
 
+// Reset flag whenever Chrome auto-detaches (e.g. tab moved to new window,
+// tab navigated, or previous run ended without clean detach).
+chrome.debugger.onDetach.addListener(() => {
+  debuggerAttached = false;
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'startSending') {
     stopRequested = false;
@@ -295,14 +301,17 @@ async function getOrOpenMailTab() {
   ));
   if (mailTab) {
     broadcast({ type: 'log', text: 'Found iCloud Mail tab (id ' + mailTab.id + ').', level: 'info' });
-    // Move iCloud Mail to its own window so Chrome gives it full JS execution
-    // priority without stealing focus from the user's current window.
     const win = await chrome.windows.get(mailTab.windowId).catch(() => null);
     if (win && win.type === 'popup') {
       // Already in a dedicated popup window — just ensure it is not minimised
       await chrome.windows.update(mailTab.windowId, { state: 'normal' }).catch(() => {});
     } else {
-      // Move to a small dedicated popup window the user can ignore
+      // Detach debugger before moving the tab — Chrome auto-detaches it during
+      // a window move anyway, and the onDetach listener will reset the flag.
+      // Doing it explicitly avoids a race where sendCommand fires mid-move.
+      await detachDebugger();
+      // Move to a dedicated popup window so Chrome gives it full JS execution
+      // speed without stealing focus from the user's current window.
       const popup = await chrome.windows.create({
         tabId: mailTab.id,
         type: 'popup',
@@ -311,6 +320,9 @@ async function getOrOpenMailTab() {
         focused: false,
       }).catch(() => null);
       if (!popup) await chrome.tabs.update(mailTab.id, { active: true });
+      // Wait for the tab to settle in its new window before the caller
+      // tries to attach the debugger or inject scripts.
+      await sleep(1000);
     }
     return mailTab.id;
   }
