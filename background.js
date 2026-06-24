@@ -5,6 +5,26 @@ let stopRequested = false;
 let mailTabId = null;
 let debuggerAttached = false;
 
+// ── Service-worker keepalive ──────────────────────────────────────────────────
+// MV3 service workers are suspended after ~30 s of inactivity.
+// We create a repeating alarm every 25 s while a send run is active so the
+// worker is never killed mid-campaign.
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'swKeepAlive') {
+    // Trivial storage ping — enough to prevent suspension
+    chrome.storage.local.get('__ka', () => {});
+  }
+});
+
+function startKeepAlive() {
+  chrome.alarms.create('swKeepAlive', { periodInMinutes: 25 / 60 });
+}
+
+function stopKeepAlive() {
+  chrome.alarms.clear('swKeepAlive');
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'startSending') {
     stopRequested = false;
@@ -14,6 +34,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'stop') {
     stopRequested = true;
     detachDebugger();
+    stopKeepAlive();
   }
 });
 
@@ -52,6 +73,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   chunkDelay = chunkDelay || 5;
 
   resetEmailDedup();
+  startKeepAlive();
   broadcast({ type: 'log', text: 'Starting - ' + total + ' emails, ' + delay + 's delay.', level: 'info' });
   if (chunkEnabled)
     broadcast({ type: 'log', text: 'Chunk mode ON — ' + Math.ceil(total / chunkSize) + ' chunks of ' + chunkSize + ', ' + chunkDelay + 's pause between chunks.', level: 'info' });
@@ -212,6 +234,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   }
 
   await detachDebugger();
+  stopKeepAlive();
   broadcast({ type: 'done', sent, total });
 }
 
@@ -272,10 +295,39 @@ async function getOrOpenMailTab() {
   ));
   if (mailTab) {
     broadcast({ type: 'log', text: 'Found iCloud Mail tab (id ' + mailTab.id + ').', level: 'info' });
-    await chrome.tabs.update(mailTab.id, { active: true });
+    // Move iCloud Mail to its own window so Chrome gives it full JS execution
+    // priority without stealing focus from the user's current window.
+    const win = await chrome.windows.get(mailTab.windowId).catch(() => null);
+    if (win && win.type === 'popup') {
+      // Already in a dedicated popup window — just ensure it is not minimised
+      await chrome.windows.update(mailTab.windowId, { state: 'normal' }).catch(() => {});
+    } else {
+      // Move to a small dedicated popup window the user can ignore
+      const popup = await chrome.windows.create({
+        tabId: mailTab.id,
+        type: 'popup',
+        width: 900,
+        height: 700,
+        focused: false,
+      }).catch(() => null);
+      if (!popup) await chrome.tabs.update(mailTab.id, { active: true });
+    }
     return mailTab.id;
   }
   broadcast({ type: 'log', text: 'No iCloud Mail tab found — opening one...', level: 'info' });
+  // Open in a dedicated popup window so it is fully active but out of the way
+  const popup = await chrome.windows.create({
+    url: 'https://www.icloud.com/mail/',
+    type: 'popup',
+    width: 900,
+    height: 700,
+    focused: false,
+  }).catch(() => null);
+  if (popup && popup.tabs && popup.tabs[0]) {
+    await sleep(6000);
+    return popup.tabs[0].id;
+  }
+  // Fallback: open as a normal tab
   const tab = await chrome.tabs.create({ url: 'https://www.icloud.com/mail/' });
   await sleep(6000);
   return tab.id;

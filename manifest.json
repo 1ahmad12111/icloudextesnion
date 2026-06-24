@@ -9,7 +9,9 @@
     "activeTab",
     "scripting",
     "webNavigation",
-    "debugger"
+    "debugger",
+    "alarms",
+    "windows"
   ],
   "host_permissions": [
     "https://*.icloud.com/*",
