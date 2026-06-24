@@ -107,16 +107,68 @@ async function detachDebugger() {
   debuggerAttached = false;
 }
 
+// Chrome can silently evict a debugger session (tab crash-recovery, memory
+// pressure, internal hot-reload) without always firing onDetach.  Call this
+// before any debugger command so we always hold a live session.
+async function ensureDebugger() {
+  if (debuggerAttached) return;
+  try {
+    await chrome.debugger.attach({ tabId: mailTabId }, '1.3');
+    debuggerAttached = true;
+    broadcast({ type: 'log', text: 'Debugger re-attached.', level: 'info' });
+  } catch(e) {
+    const msg = (e.message || '').toLowerCase();
+    if (msg.includes('already')) {
+      // Chrome says already attached — treat the session as live
+      debuggerAttached = true;
+    } else {
+      throw new Error('Could not re-attach debugger: ' + e.message);
+    }
+  }
+}
+
 async function sendDebuggerType(tabId, text) {
-  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+  await ensureDebugger();
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+  } catch(e) {
+    // Session was dead even though flag said true — reset and retry once
+    debuggerAttached = false;
+    await ensureDebugger();
+    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text });
+  }
 }
 
 async function sendDebuggerEnter(tabId) {
+  await ensureDebugger();
   const base = { modifiers: 0, key: 'Enter', code: 'Enter', keyCode: 13,
     nativeVirtualKeyCode: 13, autoRepeat: false, isKeypad: false, isSystemKey: false };
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
-  await sleep(60);
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
+    await sleep(60);
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  } catch(e) {
+    debuggerAttached = false;
+    await ensureDebugger();
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
+    await sleep(60);
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  }
+}
+
+// Press Tab via debugger — used after fillSubject to nudge iCloud into
+// creating the mail2-rte body iframe (it loads lazily on body focus).
+async function sendDebuggerTab(tabId) {
+  await ensureDebugger();
+  const base = { modifiers: 0, key: 'Tab', code: 'Tab', keyCode: 9,
+    nativeVirtualKeyCode: 9, autoRepeat: false, isKeypad: false, isSystemKey: false };
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', ...base });
+    await sleep(60);
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  } catch(e) {
+    debuggerAttached = false;
+  }
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -250,6 +302,13 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
+      // Nudge iCloud into creating the mail2-rte body iframe — it loads lazily
+      // only when something focuses the body area.  A Tab keypress from the
+      // Subject field reliably triggers that focus transition.
+      await sleep(300);
+      await sendDebuggerTab(mailTabId);
+      await sleep(400);
+
       // Replace {EMAIL} placeholder with the first recipient's address
       body = body.replace(/\{EMAIL\}/gi, group[0]);
 
@@ -259,8 +318,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
       }
 
-      // Step 4: Find RTE iframe and fill body
-      const rteFrameId = await findRteFrame(5000);
+      // Step 4: Find RTE iframe and fill body (10 s timeout — iCloud can be slow)
+      const rteFrameId = await findRteFrame(10000);
       if (rteFrameId === null) throw new Error('Body editor iframe not found');
       broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
 
