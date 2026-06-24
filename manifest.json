@@ -17,9 +17,7 @@
     "https://*.icloud.com/*",
     "https://*.icloud-sandbox.com/*"
   ],
-  "action": {
-    "default_popup": "popup.html"
-  },
+  "action": {},
   "background": {
     "service_worker": "background.js"
   },

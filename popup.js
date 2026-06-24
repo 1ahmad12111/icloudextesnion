@@ -118,6 +118,33 @@ function renderIdDetectedBox(detected) {
   ).join('');
 }
 
+// ── Restore state from background (survives popup close) ─────────────────────
+
+function replayLogs(logs) {
+  // Logs are buffered oldest-first; addLog prepends, so replay in reverse
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const m = logs[i];
+    if (m.type === 'log') addLog(m.text, m.level || 'info');
+  }
+}
+
+chrome.runtime.sendMessage({ action: 'getStatus' }, (status) => {
+  if (chrome.runtime.lastError || !status) return;
+  if (status.logs && status.logs.length) {
+    progressCard.style.display = 'flex';
+    replayLogs(status.logs);
+  }
+  if (status.inProgress) {
+    isSending = true;
+    setUI(true);
+    progressCard.style.display = 'flex';
+    if (status.total > 0) {
+      progressBar.style.width = Math.round((status.sent / status.total) * 100) + '%';
+      progressText.textContent = status.sent + ' / ' + status.total;
+    }
+  }
+});
+
 // ── Restore saved draft ───────────────────────────────────────────────────────
 
 chrome.storage.local.get([

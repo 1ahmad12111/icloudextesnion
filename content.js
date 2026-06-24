@@ -1,6 +1,9 @@
 (function () {
-  if (window.__icloudSenderLoaded) return;
-  window.__icloudSenderLoaded = true;
+  // If a previous instance of this script is still alive, unload it cleanly
+  // so we never accumulate duplicate message listeners across re-injections.
+  if (window.__icloudSenderUnload) {
+    try { window.__icloudSenderUnload(); } catch(_) {}
+  }
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -40,7 +43,6 @@
       .map(el => shadowInput(el)).filter(Boolean);
   }
 
-  // Localized label translations for iCloud's compose fields across all supported locales
   const FIELD_LABELS = {
     To: ['To','À','宛先','An','Para','A','Aan','Till','До','Til','До','Кому',
          'Vastaanottaja','Aan','İlgili','إلى','收件人','받는 사람','Kepada','ถึง','Đến'],
@@ -49,7 +51,6 @@
               'หัวเรื่อง','Chủ đề'],
   };
 
-  // Finds a field by its visible label text, trying all localized candidates
   function findFieldByLabelText(labelKey) {
     const candidates = FIELD_LABELS[labelKey] || [labelKey];
     for (const labelText of candidates) {
@@ -94,11 +95,8 @@
     } catch(e) {}
   }
 
-  // ── 5-strategy compose button finder (from current branch) ──────────────────
   function findComposeBtn() {
-    const byXpath = xpath('//*[@id="app-body"]/ui-split-container/ui-split[2]/div/ui-split-container/ui-split[2]/div/div[1]/div/div[3]/ui-button');
-    if (byXpath) return byXpath;
-
+    // Skip the brittle XPath; use label-based matching as primary strategy
     const COMPOSE_LABELS = [
       'compose', 'new message', 'new mail', 'new email',
       'nouveau message', 'rédiger',
@@ -152,15 +150,39 @@
     return lines.join(' | ');
   }
 
+  // ── Action: closeCompose ────────────────────────────────────────────────────
+  // Dismisses any open compose dialog before starting a new one.
+  // Prevents the stale-compose / typing-in-body bug.
+  async function closeCompose() {
+    // Look for a visible compose window container
+    const composeSelectors = [
+      '[class*="compose-message"]', '[class*="ComposeWindow"]',
+      '[class*="compose-window"]', '[data-testid*="compose"]',
+    ];
+    for (const sel of composeSelectors) {
+      const win = qs(sel);
+      if (win && win.offsetParent !== null) {
+        const closeBtn = Array.from(win.querySelectorAll('ui-button, button'))
+          .find(b => /close|cancel|discard|dismiss/i.test(b.getAttribute('aria-label') || ''));
+        if (closeBtn) { click(closeBtn); await sleep(500); return { ok: true, closed: true }; }
+      }
+    }
+    // Fallback: find any visible Discard/Close button that's not the compose button itself
+    const discardBtn = Array.from(document.querySelectorAll('ui-button, button'))
+      .find(b => /^(discard|verwerfen|annuler|scarta|descartar|verwijderen)$/i.test(
+        (b.getAttribute('aria-label') || b.textContent || '').trim()
+      ) && b.offsetParent !== null);
+    if (discardBtn) { click(discardBtn); await sleep(500); return { ok: true, closed: true }; }
+    return { ok: true, closed: false };
+  }
+
   // ── Action: openCompose ─────────────────────────────────────────────────────
-  // Compose button: 5-strategy from current branch
-  // To field: just focus it — background.js types via debugger Input.insertText
   async function openCompose(to) {
     const composeBtn = findComposeBtn();
     if (!composeBtn) return { error: 'Compose button not found. DIAG: ' + diagnose() };
     click(composeBtn);
 
-    // Poll for ui-autocomplete-field inputs to appear (compose dialog opened)
+    // Poll for ui-autocomplete-field inputs to appear
     let toField = null;
     const deadline = Date.now() + 6000;
     while (Date.now() < deadline) {
@@ -172,7 +194,6 @@
 
     await sleep(800);
 
-    // Try label-based finder first, fall back to autocomplete input
     const labelField = findFieldByLabelText('To');
     if (labelField) toField = shadowInput(labelField) || labelField;
 
@@ -181,6 +202,19 @@
     try { toField.focus(); } catch(e) {}
     await sleep(100);
 
+    return { ok: true };
+  }
+
+  // ── Action: focusToField ────────────────────────────────────────────────────
+  // Called right before debugger typing to guarantee focus is on To field.
+  async function focusToField() {
+    const inputs = getAutoCompleteInputs();
+    const toField = inputs[0];
+    if (!toField) return { error: 'To field not found for focus' };
+    try { click(toField.closest('ui-autocomplete-field') || toField); } catch(e) {}
+    await sleep(150);
+    try { toField.focus(); } catch(e) {}
+    await sleep(100);
     return { ok: true };
   }
 
@@ -237,7 +271,7 @@
 
   // ── Action: clickSend ──────────────────────────────────────────────────────
   async function clickSend() {
-    await sleep(600);
+    await sleep(800); // extra breathing room vs the original 600ms
 
     const sendBtn = Array.from(document.querySelectorAll('ui-button'))
       .find(b => {
@@ -272,7 +306,7 @@
     click(sendBtn);
     await sleep(500);
 
-    // Handle modal dialogs (language-agnostic: inspect visible overlays)
+    // Handle modal dialogs — language-agnostic inspection
     await sleep(300);
     const dialogs = Array.from(document.querySelectorAll(
       '[role="dialog"], [role="alertdialog"], .dialog, .modal, ui-dialog, ui-alert'
@@ -286,23 +320,45 @@
         if (btns[0]) { try { btns[0].click(); } catch(e) {} }
         return { error: 'Invalid email address rejected by iCloud' };
       }
-      if (btns[0]) { click(btns[0]); await sleep(300); }
+      // Only dismiss dialogs that are clearly confirmation/send-related, not arbitrary ones
+      const confirmWords = /send|confirm|ok|yes|continue|proceed/i;
+      const confirmBtn = btns.find(b => confirmWords.test(b.getAttribute('aria-label') || b.textContent || ''));
+      if (confirmBtn) { click(confirmBtn); await sleep(300); }
     }
 
     return { ok: true };
   }
 
-  chrome.runtime.onMessage.addListener(function(msg, _sender, sendResponse) {
+  // ── Message listener (self-unloading) ────────────────────────────────────────
+
+  function _messageHandler(msg, _sender, sendResponse) {
     if (msg.action === 'ping') {
       sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href });
+      return true;
+    }
+    if (msg.action === 'init') {
+      // Acknowledge new run — nothing to reset here since re-injection handled it
+      sendResponse({ ok: true });
       return true;
     }
     if (msg.action === 'diagnose') {
       sendResponse({ diag: diagnose() });
       return true;
     }
+    if (msg.action === 'closeCompose') {
+      closeCompose()
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ ok: true, closed: false }));
+      return true;
+    }
     if (msg.action === 'openCompose') {
       openCompose(msg.to)
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
+      return true;
+    }
+    if (msg.action === 'focusToField') {
+      focusToField()
         .then(r => sendResponse(r))
         .catch(e => sendResponse({ error: e.message }));
       return true;
@@ -325,5 +381,13 @@
         .catch(e => sendResponse({ error: e.message }));
       return true;
     }
-  });
+  }
+
+  chrome.runtime.onMessage.addListener(_messageHandler);
+
+  // Expose unload hook so the next injection can clean up this listener
+  window.__icloudSenderUnload = function() {
+    chrome.runtime.onMessage.removeListener(_messageHandler);
+    window.__icloudSenderUnload = null;
+  };
 })();
