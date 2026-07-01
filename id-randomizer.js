@@ -230,8 +230,12 @@ function replaceValue(html, oldValue, newValue, isEmail) {
       }
     }
   } else {
-    // Plain form with word boundaries
-    const plainRe = new RegExp('(?<![\\w])' + _escapeRegex(oldValue) + '(?![\\w])', 'g');
+    // Plain form with word boundaries.
+    // Spaces in the value become \s+ so a date like "Jun 30, 2026" also matches
+    // when the HTML source has a newline between "Jun" and "30," (common in
+    // email templates where long lines are wrapped in the source).
+    const escapedPattern = _escapeRegex(oldValue).replace(/ /g, '\\s+');
+    const plainRe = new RegExp('(?<![\\w])' + escapedPattern + '(?![\\w])', 'g');
     out = out.replace(plainRe, () => { count++; return newValue; });
     // Fully entity-encoded form
     const encOld = _encodeAsEntities(oldValue);
