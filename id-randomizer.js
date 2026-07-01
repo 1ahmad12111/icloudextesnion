@@ -257,7 +257,7 @@ const _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','No
 
 function formatDateLike(isoDate) {
   const [y, m, d] = isoDate.split('-').map(Number);
-  return `${_MONTHS[m - 1]} ${d} ${y}`;
+  return `${_MONTHS[m - 1]} ${d}, ${y}`;
 }
 
 // ── Split-tag email replacer ──────────────────────────────────────────────────
