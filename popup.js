@@ -293,8 +293,11 @@ htmlFileInputEl.addEventListener('change', () => {
         idDetected = detectIds(html);
         renderIdDetectedBox(idDetected);
         // Pre-fill date picker from detected date
-        if (idDetected.dateValue && !idDateInputEl.value) {
-          idDateInputEl.value = _parseDateToIso(idDetected.dateValue);
+        // Default to today so the replacement is always visible.
+        // Pre-filling from the template's own date caused the replacement to
+        // produce the same value (no apparent change in sent emails).
+        if (!idDateInputEl.value) {
+          idDateInputEl.value = _todayIso();
         }
       }
 
