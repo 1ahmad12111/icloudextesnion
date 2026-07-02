@@ -55,7 +55,9 @@
     const candidates = FIELD_LABELS[labelKey] || [labelKey];
     for (const labelText of candidates) {
       const escaped = labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const re = new RegExp('^' + escaped + ':?\\s*$', 'i');
+      // Allow optional whitespace before AND after the optional colon so that
+      // French-typography labels like "Objet :" (space before colon) also match.
+      const re = new RegExp('^' + escaped + '\\s*:?\\s*$', 'i');
       const labels = Array.from(document.querySelectorAll('label, [role="label"], span, div, ui-label'))
         .filter(el => re.test((el.textContent || '').trim()));
       for (const label of labels) {
@@ -218,14 +220,56 @@
     return { ok: true };
   }
 
+  // Returns the shadow <input> inside a ui-text-field, or null
+  function shadowTextField(el) {
+    if (!el || !el.shadowRoot) return null;
+    return el.shadowRoot.querySelector('input, textarea') || null;
+  }
+
+  // All subject-label translations (mirrors FIELD_LABELS.Subject + common placeholders)
+  const SUBJECT_PLACEHOLDERS = [
+    'subject','objet','件名','betreff','asunto','oggetto','onderwerp','assunto',
+    'ämne','тема','emne','aihe','konu','الموضوع','主题','제목','subjek',
+    'หัวเรื่อง','chủ đề',
+  ];
+
   // ── Action: fillSubject ─────────────────────────────────────────────────────
   async function fillSubject(subject) {
     let subjectField = findFieldByLabelText('Subject');
-    if (!subjectField) { const ac = getAutoCompleteInputs(); subjectField = ac[1]; }
+
+    // Strategy 2: second ui-autocomplete-field shadow input (English iCloud)
+    if (!subjectField) {
+      const ac = getAutoCompleteInputs();
+      subjectField = ac[1] || null;
+    }
+
+    // Strategy 3: ui-text-field shadow input (used by French and other locales)
+    if (!subjectField) {
+      for (const tf of document.querySelectorAll('ui-text-field')) {
+        const inp = shadowTextField(tf);
+        if (inp && inp.offsetParent !== null) { subjectField = inp; break; }
+      }
+    }
+
+    // Strategy 4: visible <input> whose placeholder matches a known subject label
     if (!subjectField) {
       subjectField = Array.from(document.querySelectorAll('input'))
-        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } })[1];
+        .find(el => {
+          try {
+            if (el.offsetParent === null) return false;
+            const ph = (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase().trim();
+            return SUBJECT_PLACEHOLDERS.some(s => ph.includes(s));
+          } catch(e) { return false; }
+        }) || null;
     }
+
+    // Strategy 5: second visible <input> (position-based last resort)
+    if (!subjectField) {
+      const visible = Array.from(document.querySelectorAll('input'))
+        .filter(el => { try { return el.offsetParent !== null; } catch(e) { return false; } });
+      subjectField = visible[1] || null;
+    }
+
     if (!subjectField) return { error: 'Subject field not found. DIAG: ' + diagnose() };
     await typeInto(subjectField, subject);
     await sleep(300);
