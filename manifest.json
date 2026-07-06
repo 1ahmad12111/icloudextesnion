@@ -11,7 +11,8 @@
     "webNavigation",
     "debugger",
     "alarms",
-    "windows"
+    "windows",
+    "downloads"
   ],
   "host_permissions": [
     "https://*.icloud.com/*",

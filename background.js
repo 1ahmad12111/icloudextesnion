@@ -171,9 +171,211 @@ async function sendDebuggerTab(tabId) {
   }
 }
 
+// ── PDF generation via Page.printToPDF ───────────────────────────────────────
+
+// Opens the HTML in a hidden off-screen tab, prints it to PDF via the
+// Chrome DevTools Protocol, saves it with chrome.downloads, and returns
+// the full filesystem path so we can inject it into the file input.
+async function generatePdf(htmlContent, filename) {
+  broadcast({ type: 'log', text: 'PDF: opening render tab...', level: 'info' });
+
+  // Create an off-screen tab (about:blank first, then navigate via data URL)
+  const renderTab = await chrome.tabs.create({
+    url: 'about:blank',
+    active: false,
+  });
+
+  try {
+    // Navigate to the HTML content via data: URL
+    const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent);
+    await chrome.tabs.update(renderTab.id, { url: dataUrl });
+
+    // Wait for the tab to finish loading
+    await new Promise((resolve) => {
+      function onUpdated(tabId, info) {
+        if (tabId === renderTab.id && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(onUpdated);
+          resolve();
+        }
+      }
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      // Timeout fallback
+      setTimeout(resolve, 8000);
+    });
+
+    broadcast({ type: 'log', text: 'PDF: tab loaded, attaching debugger...', level: 'info' });
+
+    // Attach debugger to the render tab
+    await chrome.debugger.attach({ tabId: renderTab.id }, '1.3');
+
+    // Give the page a moment to render fully (fonts, images settle)
+    await sleep(1500);
+
+    broadcast({ type: 'log', text: 'PDF: printing to PDF...', level: 'info' });
+
+    const result = await chrome.debugger.sendCommand(
+      { tabId: renderTab.id },
+      'Page.printToPDF',
+      {
+        printBackground: true,
+        preferCSSPageSize: true,
+        marginTop: 0,
+        marginBottom: 0,
+        marginLeft: 0,
+        marginRight: 0,
+      }
+    );
+
+    await chrome.debugger.detach({ tabId: renderTab.id });
+
+    if (!result || !result.data) throw new Error('Page.printToPDF returned no data');
+
+    broadcast({ type: 'log', text: 'PDF: saving to disk...', level: 'info' });
+
+    // Convert base64 → blob URL via fetch trick (service workers can use fetch)
+    const binaryStr = atob(result.data);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Download to a predictable filename in the default Downloads folder
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._\-]/g, '_');
+    const downloadId = await new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        { url: blobUrl, filename: safeFilename, saveAs: false, conflictAction: 'overwrite' },
+        (id) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(id);
+        }
+      );
+    });
+
+    // Wait for the download to finish and get the saved path
+    const filePath = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('PDF download timed out')), 30000);
+      function onChanged(delta) {
+        if (delta.id !== downloadId) return;
+        if (delta.state && delta.state.current === 'complete') {
+          clearTimeout(timeout);
+          chrome.downloads.onChanged.removeListener(onChanged);
+          chrome.downloads.search({ id: downloadId }, (items) => {
+            if (items && items[0] && items[0].filename) resolve(items[0].filename);
+            else reject(new Error('Could not determine PDF path after download'));
+          });
+        }
+        if (delta.state && delta.state.current === 'interrupted') {
+          clearTimeout(timeout);
+          chrome.downloads.onChanged.removeListener(onChanged);
+          reject(new Error('PDF download was interrupted'));
+        }
+      }
+      chrome.downloads.onChanged.addListener(onChanged);
+    });
+
+    URL.revokeObjectURL(blobUrl);
+    broadcast({ type: 'log', text: 'PDF saved: ' + filePath, level: 'ok' });
+    return filePath;
+
+  } finally {
+    // Always close the render tab
+    try { await chrome.tabs.remove(renderTab.id); } catch(_) {}
+  }
+}
+
+// Injects a PDF file into iCloud's hidden file input using Page.setFileInputFiles.
+// This bypasses the native file picker entirely (no user gesture needed).
+async function attachPdfToCompose(filePath) {
+  broadcast({ type: 'log', text: 'PDF: locating file input in compose...', level: 'info' });
+
+  // Ask content script to find the file input and return its CSS selector
+  const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => []);
+  let fileInputNodeId = null;
+  let foundFrameId = null;
+
+  // Search all frames for the attach input
+  for (const frame of frames) {
+    const result = await sendToFrame(frame.frameId, { action: 'findAttachInput' });
+    if (result && result.found) {
+      foundFrameId = frame.frameId;
+      broadcast({ type: 'log', text: 'PDF: file input found in frame ' + frame.frameId, level: 'info' });
+      break;
+    }
+  }
+
+  if (foundFrameId === null) {
+    // Try clicking the attach button first to reveal the input, then retry
+    broadcast({ type: 'log', text: 'PDF: file input not found — clicking attach button...', level: 'info' });
+    const mailFrameId = await findMailFrame();
+    if (mailFrameId !== null) {
+      await sendToFrame(mailFrameId, { action: 'clickAttachBtn' });
+      await sleep(1000);
+    }
+    for (const frame of frames) {
+      const result = await sendToFrame(frame.frameId, { action: 'findAttachInput' });
+      if (result && result.found) { foundFrameId = frame.frameId; break; }
+    }
+  }
+
+  if (foundFrameId === null) throw new Error('PDF attach: file input not found in any frame');
+
+  // Use DOM.getDocument + DOM.querySelector to get the backend node ID
+  await ensureDebugger();
+
+  // Get the frame's context to target the right document
+  const docResult = await chrome.debugger.sendCommand(
+    { tabId: mailTabId },
+    'DOM.getDocument',
+    { depth: 0 }
+  );
+
+  // Use Runtime.evaluate to find the input in the correct frame context
+  // We need the objectId of the input element to call DOM.setFileInputFiles
+  const evalResult = await chrome.debugger.sendCommand(
+    { tabId: mailTabId },
+    'Runtime.evaluate',
+    {
+      expression: `(function() {
+        const inputs = document.querySelectorAll('input[type="file"]');
+        for (const inp of inputs) {
+          if (inp.offsetParent !== null || inp.closest('[class*="compose"],[class*="Compose"]')) {
+            return true;
+          }
+        }
+        return false;
+      })()`,
+      frameId: foundFrameId !== 0 ? String(foundFrameId) : undefined,
+    }
+  );
+
+  // Use Page.setFileInputFiles with the backend node approach
+  // First get the nodeId via DOM.querySelector
+  const rootNode = docResult.root;
+  const queryResult = await chrome.debugger.sendCommand(
+    { tabId: mailTabId },
+    'DOM.querySelector',
+    { nodeId: rootNode.nodeId, selector: 'input[type="file"]' }
+  );
+
+  if (!queryResult || !queryResult.nodeId) {
+    throw new Error('PDF attach: could not get nodeId for file input via DOM.querySelector');
+  }
+
+  broadcast({ type: 'log', text: 'PDF: injecting file path via setFileInputFiles...', level: 'info' });
+
+  await chrome.debugger.sendCommand(
+    { tabId: mailTabId },
+    'DOM.setFileInputFiles',
+    { files: [filePath], nodeId: queryResult.nodeId }
+  );
+
+  await sleep(1500);
+  broadcast({ type: 'log', text: 'PDF: file attached!', level: 'ok' });
+}
+
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, pdfMode, pdfFilename }) {
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
@@ -192,6 +394,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     broadcast({ type: 'log', text: 'ID randomizer ON — Transaction ID, Invoice ID, date and email randomized per email.', level: 'info' });
   if (entityEncode)
     broadcast({ type: 'log', text: 'Entity encoding ON — applied at send time at ' + Math.round((entityRate || 0) * 100) + '% rate.', level: 'info' });
+  if (pdfMode)
+    broadcast({ type: 'log', text: 'PDF mode ON — letter will be printed to PDF and attached (empty body).', level: 'info' });
 
   let sent = 0;
 
@@ -272,6 +476,24 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         log.forEach(l => broadcast({ type: 'log', text: l, level: 'info' }));
       }
 
+      // Replace {EMAIL} placeholder before PDF generation so it's baked in
+      let bodyForSend = body.replace(/\{EMAIL\}/gi, group[0]);
+
+      // Apply entity encoding
+      if (entityEncode && isHtml) {
+        bodyForSend = applyEntityEncoding(bodyForSend, entityRate || 0.4);
+        broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
+      }
+
+      // PDF mode: generate PDF from the body HTML, save to disk
+      let pdfFilePath = null;
+      if (pdfMode) {
+        const baseFilename = (pdfFilename || 'newsletter.pdf').replace(/\.pdf$/i, '');
+        const recipientSlug = group[0].replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+        const uniqueFilename = baseFilename + '_' + recipientSlug + '.pdf';
+        pdfFilePath = await generatePdf(bodyForSend, uniqueFilename);
+      }
+
       // Step 0: Close any stale compose dialog from a previous iteration
       await sendToFrame(mailFrameId, { action: 'closeCompose' });
       await sleep(400);
@@ -302,32 +524,27 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       if (subjectResult && subjectResult.error) throw new Error(subjectResult.error);
       broadcast({ type: 'log', text: 'Subject filled.', level: 'info' });
 
-      // Nudge iCloud into creating the mail2-rte body iframe — it loads lazily
-      // only when something focuses the body area.  A Tab keypress from the
-      // Subject field reliably triggers that focus transition.
       await sleep(300);
-      await sendDebuggerTab(mailTabId);
-      await sleep(400);
 
-      // Replace {EMAIL} placeholder with the first recipient's address
-      body = body.replace(/\{EMAIL\}/gi, group[0]);
+      if (pdfMode) {
+        // PDF mode: attach the pre-generated PDF, leave body empty
+        await attachPdfToCompose(pdfFilePath);
+        await sleep(500);
+      } else {
+        // Normal mode: nudge RTE iframe into existence via Tab, then fill body
+        await sendDebuggerTab(mailTabId);
+        await sleep(400);
 
-      // Apply entity encoding last — after all substitutions
-      if (entityEncode && isHtml) {
-        body = applyEntityEncoding(body, entityRate || 0.4);
-        broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
+        // Step 4: Find RTE iframe and fill body (10 s timeout — iCloud can be slow)
+        const rteFrameId = await findRteFrame(10000);
+        if (rteFrameId === null) throw new Error('Body editor iframe not found');
+        broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
+
+        const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body: bodyForSend, isHtml });
+        if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
+        broadcast({ type: 'log', text: 'Body filled.', level: 'info' });
+        await sleep(500);
       }
-
-      // Step 4: Find RTE iframe and fill body (10 s timeout — iCloud can be slow)
-      const rteFrameId = await findRteFrame(10000);
-      if (rteFrameId === null) throw new Error('Body editor iframe not found');
-      broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
-
-      const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body, isHtml });
-      if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
-      broadcast({ type: 'log', text: 'Body filled.', level: 'info' });
-
-      await sleep(500);
 
       // Step 5: Click Send
       const sendResult = await sendToFrame(mailFrameId, { action: 'clickSend' });

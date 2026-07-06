@@ -35,6 +35,19 @@
 
       <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="5"></textarea>
       <label class="row"><input type="checkbox" id="isHtml" /><span>Send as HTML</span></label>
+
+      <label class="toggle-label" style="border-top:1px solid #e0e0e0;padding-top:8px;margin-top:4px">
+        <input type="checkbox" id="pdfMode" />
+        <span>Send as PDF attachment</span>
+        <span class="hint">&nbsp;— converts HTML to PDF and attaches it (empty body)</span>
+      </label>
+      <div id="pdfPanel" style="display:none;padding-left:20px;margin-top:4px">
+        <label style="font-size:12px;gap:6px;display:flex;align-items:center;">
+          PDF filename:&nbsp;
+          <input type="text" id="pdfFilename" value="newsletter.pdf" style="width:160px;padding:3px 6px;font-size:12px;border:1px solid #ccc;border-radius:4px;" />
+        </label>
+        <p class="hint" style="margin-top:4px;color:#0071e3">⚡ Requires "HTML" version loaded. The letter will be printed to PDF then attached via the debugger.</p>
+      </div>
     </section>
 
     <section class="card">

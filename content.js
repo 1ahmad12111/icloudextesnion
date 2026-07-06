@@ -269,6 +269,37 @@
     return { ok: true };
   }
 
+  // ── Action: findAttachInput ─────────────────────────────────────────────────
+  // Locates iCloud's hidden file input used for attachments.
+  // Returns { found: true } if a file input associated with compose exists.
+  function findAttachInput() {
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    const found = inputs.some(inp => {
+      // iCloud keeps the file input inside the compose window or always in DOM
+      const inCompose = inp.closest('[class*="compose"],[class*="Compose"],[class*="window"]');
+      return inCompose || inp.accept || inp.multiple !== undefined;
+    });
+    return { found: inputs.length > 0, count: inputs.length };
+  }
+
+  // ── Action: clickAttachBtn ──────────────────────────────────────────────────
+  // Clicks the paperclip/attach button in the compose window to trigger the
+  // file input to become active (some iCloud versions lazily enable it).
+  async function clickAttachBtn() {
+    const ATTACH_LABELS = [
+      'attach', 'attachment', 'pièce jointe', 'anhang', 'adjuntar',
+      'allegato', 'bijlage', 'annexe', 'anexo', 'bifoga',
+      'приложить', 'ek', 'إرفاق', '添付', '附件', '첨부',
+    ];
+    const btn = Array.from(document.querySelectorAll('ui-button, button, [role="button"]'))
+      .find(b => {
+        const lbl = (b.getAttribute('aria-label') || b.title || '').toLowerCase();
+        return ATTACH_LABELS.some(l => lbl.includes(l));
+      });
+    if (btn) { click(btn); await sleep(500); return { ok: true, clicked: true }; }
+    return { ok: true, clicked: false };
+  }
+
   // ── Action: clickSend ──────────────────────────────────────────────────────
   async function clickSend() {
     await sleep(800); // extra breathing room vs the original 600ms
@@ -373,6 +404,16 @@
       fillBody(msg.body, msg.isHtml)
         .then(r => sendResponse(r))
         .catch(e => sendResponse({ error: e.message + ' DIAG: ' + diagnose() }));
+      return true;
+    }
+    if (msg.action === 'findAttachInput') {
+      sendResponse(findAttachInput());
+      return true;
+    }
+    if (msg.action === 'clickAttachBtn') {
+      clickAttachBtn()
+        .then(r => sendResponse(r))
+        .catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'clickSend') {

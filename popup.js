@@ -20,6 +20,9 @@ const idRandomizePanelEl = document.getElementById('idRandomizePanel');
 const idDetectedBoxEl = document.getElementById('idDetectedBox');
 const idDateInputEl   = document.getElementById('idDateInput');
 const idDateTodayBtn  = document.getElementById('idDateToday');
+const pdfModeEl       = document.getElementById('pdfMode');
+const pdfPanelEl      = document.getElementById('pdfPanel');
+const pdfFilenameEl   = document.getElementById('pdfFilename');
 const chunkEnabledEl  = document.getElementById('chunkEnabled');
 const chunkPanelEl    = document.getElementById('chunkPanel');
 const chunkSizeEl     = document.getElementById('chunkSize');
@@ -159,7 +162,8 @@ chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
   'idRandomize', 'idDetected', 'fixedDateIso',
-  'chunkEnabled', 'chunkSize', 'chunkDelay'
+  'chunkEnabled', 'chunkSize', 'chunkDelay',
+  'pdfMode', 'pdfFilename'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -179,6 +183,8 @@ chrome.storage.local.get([
   if (data.chunkEnabled) { chunkEnabledEl.checked = true; toggleChunkPanel(); }
   if (data.chunkSize)  chunkSizeEl.value  = data.chunkSize;
   if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
+  if (data.pdfMode) { pdfModeEl.checked = true; togglePdfPanel(); }
+  if (data.pdfFilename) pdfFilenameEl.value = data.pdfFilename;
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -203,6 +209,8 @@ function saveDraft() {
     chunkEnabled:  chunkEnabledEl.checked,
     chunkSize:     Number(chunkSizeEl.value) || 10,
     chunkDelay:    Number(chunkDelayEl.value) || 5,
+    pdfMode:       pdfModeEl.checked,
+    pdfFilename:   pdfFilenameEl.value.trim() || 'newsletter.pdf',
   });
 }
 
@@ -215,6 +223,7 @@ entityRateEl.addEventListener('input', () => {
   entityRateValEl.textContent = entityRateEl.value + '%';
   saveDraft();
 });
+pdfModeEl.addEventListener('change', () => { togglePdfPanel(); saveDraft(); });
 idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
 idDateInputEl.addEventListener('change', saveDraft);
 idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
@@ -232,6 +241,10 @@ function toggleEntityRate() {
 
 function toggleIdPanel() {
   idRandomizePanelEl.style.display = idRandomizeEl.checked ? '' : 'none';
+}
+
+function togglePdfPanel() {
+  pdfPanelEl.style.display = pdfModeEl.checked ? '' : 'none';
 }
 
 function toggleChunkPanel() {
@@ -386,9 +399,15 @@ async function startSending() {
   const chunkEnabled = chunkEnabledEl.checked;
   const chunkSize    = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
   const chunkDelay   = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
+  const pdfMode      = pdfModeEl.checked;
+  const pdfFilename  = pdfFilenameEl.value.trim() || 'newsletter.pdf';
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
+  if (pdfMode && !htmlVersions.length && !body) {
+    alert('PDF mode requires an HTML version to be loaded.');
+    return;
+  }
 
   const bodies  = htmlVersions.length ? htmlVersions.map(v => v.html) : [body];
   const useHtml = htmlVersions.length > 0 ? true : isHtml;
@@ -414,7 +433,8 @@ async function startSending() {
     isHtml: useHtml, delay, batchSize,
     randomize, entityEncode, entityRate,
     idRandomize, idDetected, fixedDateIso,
-    chunkEnabled, chunkSize, chunkDelay
+    chunkEnabled, chunkSize, chunkDelay,
+    pdfMode, pdfFilename
   });
 }
 
