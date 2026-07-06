@@ -179,37 +179,28 @@ async function sendDebuggerTab(tabId) {
 async function generatePdf(htmlContent, filename) {
   broadcast({ type: 'log', text: 'PDF: opening render tab...', level: 'info' });
 
-  // Create an off-screen tab (about:blank first, then navigate via data URL)
-  const renderTab = await chrome.tabs.create({
-    url: 'about:blank',
-    active: false,
-  });
+  const renderTab = await chrome.tabs.create({ url: 'about:blank', active: false });
 
   try {
-    // Navigate to the HTML content via data: URL
-    const renderDataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent);
-    await chrome.tabs.update(renderTab.id, { url: renderDataUrl });
+    // Attach debugger before navigating so we can use Page commands immediately
+    await chrome.debugger.attach({ tabId: renderTab.id }, '1.3');
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.enable');
 
-    // Wait for the tab to finish loading
-    await new Promise((resolve) => {
-      function onUpdated(tabId, info) {
-        if (tabId === renderTab.id && info.status === 'complete') {
-          chrome.tabs.onUpdated.removeListener(onUpdated);
-          resolve();
-        }
-      }
-      chrome.tabs.onUpdated.addListener(onUpdated);
-      // Timeout fallback
-      setTimeout(resolve, 8000);
+    // Get the main frame ID (needed for setDocumentContent)
+    const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
+    const frameId = frameTree.frameTree.frame.id;
+
+    // Inject HTML directly — avoids data: URL restrictions (blocked scripts, null origin)
+    // so the newsletter renders exactly as in a normal browser tab.
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.setDocumentContent', {
+      frameId,
+      html: htmlContent,
     });
 
-    broadcast({ type: 'log', text: 'PDF: tab loaded, attaching debugger...', level: 'info' });
+    broadcast({ type: 'log', text: 'PDF: tab loaded, waiting for render...', level: 'info' });
 
-    // Attach debugger to the render tab
-    await chrome.debugger.attach({ tabId: renderTab.id }, '1.3');
-
-    // Give the page a moment to render fully (fonts, images settle)
-    await sleep(1500);
+    // Wait for layout, web fonts, and images to fully settle
+    await sleep(3500);
 
     broadcast({ type: 'log', text: 'PDF: printing to PDF...', level: 'info' });
 
