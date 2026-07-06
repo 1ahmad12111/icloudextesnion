@@ -187,8 +187,8 @@ async function generatePdf(htmlContent, filename) {
 
   try {
     // Navigate to the HTML content via data: URL
-    const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent);
-    await chrome.tabs.update(renderTab.id, { url: dataUrl });
+    const renderDataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent);
+    await chrome.tabs.update(renderTab.id, { url: renderDataUrl });
 
     // Wait for the tab to finish loading
     await new Promise((resolve) => {
