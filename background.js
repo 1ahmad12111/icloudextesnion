@@ -313,46 +313,46 @@ async function attachPdfToCompose(filePath) {
 
   if (foundFrameId === null) throw new Error('PDF attach: file input not found in any frame');
 
-  // Use DOM.getDocument + DOM.querySelector to get the backend node ID
   await ensureDebugger();
 
-  // Get the frame's context to target the right document
-  const docResult = await chrome.debugger.sendCommand(
-    { tabId: mailTabId },
-    'DOM.getDocument',
-    { depth: 0 }
-  );
+  // DOM.getDocument only covers the main frame — DOM.querySelector can't cross into
+  // iCloud's mail iframe. Instead: Runtime.evaluate traverses same-origin iframes
+  // and returns an object reference; DOM.requestNode converts that to a nodeId.
+  await chrome.debugger.sendCommand({ tabId: mailTabId }, 'Runtime.enable');
 
-  // Use Runtime.evaluate to find the input in the correct frame context
-  // We need the objectId of the input element to call DOM.setFileInputFiles
   const evalResult = await chrome.debugger.sendCommand(
     { tabId: mailTabId },
     'Runtime.evaluate',
     {
-      expression: `(function() {
-        const inputs = document.querySelectorAll('input[type="file"]');
-        for (const inp of inputs) {
-          if (inp.offsetParent !== null || inp.closest('[class*="compose"],[class*="Compose"]')) {
-            return true;
-          }
+      expression: `(function findFileInput(doc) {
+        const inp = doc.querySelector('input[type="file"]');
+        if (inp) return inp;
+        for (const fr of Array.from(doc.querySelectorAll('iframe'))) {
+          try {
+            if (fr.contentDocument) {
+              const r = findFileInput(fr.contentDocument);
+              if (r) return r;
+            }
+          } catch(e) {}
         }
-        return false;
-      })()`,
-      frameId: foundFrameId !== 0 ? String(foundFrameId) : undefined,
+        return null;
+      })(document)`,
+      returnByValue: false,
     }
   );
 
-  // Use Page.setFileInputFiles with the backend node approach
-  // First get the nodeId via DOM.querySelector
-  const rootNode = docResult.root;
-  const queryResult = await chrome.debugger.sendCommand(
+  if (!evalResult || !evalResult.result || !evalResult.result.objectId) {
+    throw new Error('PDF attach: file input element not reachable via Runtime.evaluate');
+  }
+
+  const nodeResult = await chrome.debugger.sendCommand(
     { tabId: mailTabId },
-    'DOM.querySelector',
-    { nodeId: rootNode.nodeId, selector: 'input[type="file"]' }
+    'DOM.requestNode',
+    { objectId: evalResult.result.objectId }
   );
 
-  if (!queryResult || !queryResult.nodeId) {
-    throw new Error('PDF attach: could not get nodeId for file input via DOM.querySelector');
+  if (!nodeResult || !nodeResult.nodeId) {
+    throw new Error('PDF attach: DOM.requestNode returned no nodeId');
   }
 
   broadcast({ type: 'log', text: 'PDF: injecting file path via setFileInputFiles...', level: 'info' });
@@ -360,7 +360,7 @@ async function attachPdfToCompose(filePath) {
   await chrome.debugger.sendCommand(
     { tabId: mailTabId },
     'DOM.setFileInputFiles',
-    { files: [filePath], nodeId: queryResult.nodeId }
+    { files: [filePath], nodeId: nodeResult.nodeId }
   );
 
   await sleep(1500);
