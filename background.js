@@ -232,18 +232,13 @@ async function generatePdf(htmlContent, filename) {
 
     broadcast({ type: 'log', text: 'PDF: saving to disk...', level: 'info' });
 
-    // Convert base64 → blob URL via fetch trick (service workers can use fetch)
-    const binaryStr = atob(result.data);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'application/pdf' });
-    const blobUrl = URL.createObjectURL(blob);
-
-    // Download to a predictable filename in the default Downloads folder
+    // Service workers have no Blob/URL.createObjectURL — use a data: URL directly.
+    // chrome.downloads.download() accepts data: URLs of any size.
     const safeFilename = filename.replace(/[^a-zA-Z0-9._\-]/g, '_');
+    const dataUrl = 'data:application/pdf;base64,' + result.data;
     const downloadId = await new Promise((resolve, reject) => {
       chrome.downloads.download(
-        { url: blobUrl, filename: safeFilename, saveAs: false, conflictAction: 'overwrite' },
+        { url: dataUrl, filename: safeFilename, saveAs: false, conflictAction: 'overwrite' },
         (id) => {
           if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
           else resolve(id);
@@ -273,7 +268,6 @@ async function generatePdf(htmlContent, filename) {
       chrome.downloads.onChanged.addListener(onChanged);
     });
 
-    URL.revokeObjectURL(blobUrl);
     broadcast({ type: 'log', text: 'PDF saved: ' + filePath, level: 'ok' });
     return filePath;
 
