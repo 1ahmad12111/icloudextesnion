@@ -20,9 +20,11 @@ const idRandomizePanelEl = document.getElementById('idRandomizePanel');
 const idDetectedBoxEl = document.getElementById('idDetectedBox');
 const idDateInputEl   = document.getElementById('idDateInput');
 const idDateTodayBtn  = document.getElementById('idDateToday');
-const pdfModeEl       = document.getElementById('pdfMode');
-const pdfPanelEl      = document.getElementById('pdfPanel');
-const pdfFilenameEl   = document.getElementById('pdfFilename');
+const modeListEl      = document.getElementById('modeList');
+const modeAddEl       = document.getElementById('modeAdd');
+const modeAddBtnEl    = document.getElementById('modeAddBtn');
+const modeAttachRowEl = document.getElementById('modeAttachRow');
+const attachFilenameEl= document.getElementById('attachFilename');
 const chunkEnabledEl  = document.getElementById('chunkEnabled');
 const chunkPanelEl    = document.getElementById('chunkPanel');
 const chunkSizeEl     = document.getElementById('chunkSize');
@@ -36,8 +38,8 @@ const progressText    = document.getElementById('progressText');
 const logEl           = document.getElementById('log');
 
 let htmlVersions = [];
-// Detected values from the first uploaded HTML version (used for ID randomization)
-let idDetected = null; // { txnValue, invValue, dateValue, sellerName, emailValue }
+let sendModes = ['html']; // ordered send-mode sequence, rotates per email
+let idDetected = null;
 
 // applyEntityEncoding() lives in randomizer.js (shared with background.js)
 
@@ -139,6 +141,8 @@ function replayLogs(logs) {
   }
 }
 
+renderModeList(); // render default ['html'] on first load
+
 chrome.runtime.sendMessage({ action: 'getStatus' }, (status) => {
   if (chrome.runtime.lastError || !status) return;
   if (status.logs && status.logs.length) {
@@ -163,7 +167,7 @@ chrome.storage.local.get([
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
   'idRandomize', 'idDetected', 'fixedDateIso',
   'chunkEnabled', 'chunkSize', 'chunkDelay',
-  'pdfMode', 'pdfFilename'
+  'sendModes', 'attachFilename'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -183,8 +187,9 @@ chrome.storage.local.get([
   if (data.chunkEnabled) { chunkEnabledEl.checked = true; toggleChunkPanel(); }
   if (data.chunkSize)  chunkSizeEl.value  = data.chunkSize;
   if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
-  if (data.pdfMode) { pdfModeEl.checked = true; togglePdfPanel(); }
-  if (data.pdfFilename) pdfFilenameEl.value = data.pdfFilename;
+  if (data.sendModes && data.sendModes.length) sendModes = data.sendModes;
+  if (data.attachFilename) attachFilenameEl.value = data.attachFilename;
+  renderModeList();
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
     renderVersions();
@@ -209,8 +214,8 @@ function saveDraft() {
     chunkEnabled:  chunkEnabledEl.checked,
     chunkSize:     Number(chunkSizeEl.value) || 10,
     chunkDelay:    Number(chunkDelayEl.value) || 5,
-    pdfMode:       pdfModeEl.checked,
-    pdfFilename:   pdfFilenameEl.value.trim() || 'newsletter.pdf',
+    sendModes,
+    attachFilename: attachFilenameEl.value.trim() || 'newsletter',
   });
 }
 
@@ -223,7 +228,7 @@ entityRateEl.addEventListener('input', () => {
   entityRateValEl.textContent = entityRateEl.value + '%';
   saveDraft();
 });
-pdfModeEl.addEventListener('change', () => { togglePdfPanel(); saveDraft(); });
+attachFilenameEl.addEventListener('input', saveDraft);
 idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
 idDateInputEl.addEventListener('change', saveDraft);
 idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
@@ -243,9 +248,66 @@ function toggleIdPanel() {
   idRandomizePanelEl.style.display = idRandomizeEl.checked ? '' : 'none';
 }
 
-function togglePdfPanel() {
-  pdfPanelEl.style.display = pdfModeEl.checked ? '' : 'none';
+const MODE_LABELS = { html: 'HTML body', pdf: 'PDF attachment', png: 'PNG attachment', jpeg: 'JPEG attachment' };
+
+function renderModeList() {
+  modeListEl.innerHTML = '';
+  const hasAttach = sendModes.some(m => m !== 'html');
+  modeAttachRowEl.style.display = hasAttach ? '' : 'none';
+
+  sendModes.forEach((mode, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 8px;background:#f5f5f7;border-radius:6px;font-size:12px;';
+    row.draggable = true;
+    row.dataset.i = i;
+
+    const grip = document.createElement('span');
+    grip.textContent = '⠿';
+    grip.style.cssText = 'cursor:grab;color:#aaa;font-size:14px;';
+    row.appendChild(grip);
+
+    const badge = document.createElement('span');
+    badge.style.cssText = 'background:#0071e3;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;';
+    badge.textContent = i + 1;
+    row.appendChild(badge);
+
+    const label = document.createElement('span');
+    label.style.flex = '1';
+    label.textContent = MODE_LABELS[mode] || mode;
+    row.appendChild(label);
+
+    const del = document.createElement('button');
+    del.textContent = '✕';
+    del.style.cssText = 'border:none;background:none;color:#999;cursor:pointer;font-size:13px;padding:0 2px;';
+    del.addEventListener('click', () => {
+      if (sendModes.length > 1) sendModes.splice(i, 1);
+      renderModeList(); saveDraft();
+    });
+    row.appendChild(del);
+
+    // Drag-to-reorder
+    row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', i); });
+    row.addEventListener('dragover', e => { e.preventDefault(); row.style.outline = '2px solid #0071e3'; });
+    row.addEventListener('dragleave', () => { row.style.outline = ''; });
+    row.addEventListener('drop', e => {
+      e.preventDefault(); row.style.outline = '';
+      const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      const to = i;
+      if (from !== to) {
+        const [item] = sendModes.splice(from, 1);
+        sendModes.splice(to, 0, item);
+        renderModeList(); saveDraft();
+      }
+    });
+
+    modeListEl.appendChild(row);
+  });
 }
+
+modeAddBtnEl.addEventListener('click', () => {
+  sendModes.push(modeAddEl.value);
+  renderModeList(); saveDraft();
+});
 
 function toggleChunkPanel() {
   chunkPanelEl.style.display = chunkEnabledEl.checked ? 'flex' : 'none';
@@ -396,16 +458,16 @@ async function startSending() {
   const entityRate   = Number(entityRateEl.value) / 100;
   const idRandomize  = idRandomizeEl.checked;
   const fixedDateIso = idDateInputEl.value || null;
-  const chunkEnabled = chunkEnabledEl.checked;
-  const chunkSize    = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
-  const chunkDelay   = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
-  const pdfMode      = pdfModeEl.checked;
-  const pdfFilename  = pdfFilenameEl.value.trim() || 'newsletter.pdf';
+  const chunkEnabled   = chunkEnabledEl.checked;
+  const chunkSize      = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
+  const chunkDelay     = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
+  const attachFilename = attachFilenameEl.value.trim() || 'newsletter';
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
-  if (pdfMode && !htmlVersions.length && !body) {
-    alert('PDF mode requires an HTML version to be loaded.');
+  const needsHtml = sendModes.some(m => m !== 'html');
+  if (needsHtml && !htmlVersions.length && !body) {
+    alert('PDF/PNG/JPEG modes require an HTML version to be loaded.');
     return;
   }
 
@@ -434,7 +496,7 @@ async function startSending() {
     randomize, entityEncode, entityRate,
     idRandomize, idDetected, fixedDateIso,
     chunkEnabled, chunkSize, chunkDelay,
-    pdfMode, pdfFilename
+    sendModes, attachFilename
   });
 }
 

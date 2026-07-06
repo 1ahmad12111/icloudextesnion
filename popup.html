@@ -36,17 +36,29 @@
       <textarea id="body" placeholder="Or type your message here (plain text or HTML)..." rows="5"></textarea>
       <label class="row"><input type="checkbox" id="isHtml" /><span>Send as HTML</span></label>
 
-      <label class="toggle-label" style="border-top:1px solid #e0e0e0;padding-top:8px;margin-top:4px">
-        <input type="checkbox" id="pdfMode" />
-        <span>Send as PDF attachment</span>
-        <span class="hint">&nbsp;— converts HTML to PDF and attaches it (empty body)</span>
-      </label>
-      <div id="pdfPanel" style="display:none;padding-left:20px;margin-top:4px">
-        <label style="font-size:12px;gap:6px;display:flex;align-items:center;">
-          PDF filename:&nbsp;
-          <input type="text" id="pdfFilename" value="newsletter.pdf" style="width:160px;padding:3px 6px;font-size:12px;border:1px solid #ccc;border-radius:4px;" />
-        </label>
-        <p class="hint" style="margin-top:4px;color:#0071e3">⚡ Requires "HTML" version loaded. The letter will be printed to PDF then attached via the debugger.</p>
+      <div style="border-top:1px solid #e0e0e0;padding-top:10px;margin-top:6px">
+        <div class="field-label" style="margin-bottom:6px">
+          Send mode sequence
+          <span class="hint">&nbsp;— rotates per email (drag to reorder)</span>
+        </div>
+        <div id="modeList" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="modeAdd" style="padding:4px 8px;font-size:12px;border:1px solid #ccc;border-radius:4px;">
+            <option value="html">HTML body</option>
+            <option value="pdf">PDF attachment</option>
+            <option value="png">PNG attachment</option>
+            <option value="jpeg">JPEG attachment</option>
+          </select>
+          <button type="button" id="modeAddBtn" class="file-btn" style="padding:4px 12px;font-size:12px">+ Add</button>
+        </div>
+        <div id="modeAttachRow" style="display:none;margin-top:8px">
+          <label style="font-size:12px;gap:6px;display:flex;align-items:center;">
+            Attachment filename base:&nbsp;
+            <input type="text" id="attachFilename" value="newsletter" style="width:140px;padding:3px 6px;font-size:12px;border:1px solid #ccc;border-radius:4px;" />
+            <span class="hint">&nbsp;(extension added automatically)</span>
+          </label>
+          <p class="hint" style="margin-top:4px;color:#0071e3">⚡ Attachment modes convert your HTML to PDF/PNG/JPEG via the debugger then inject it — no file picker.</p>
+        </div>
       </div>
     </section>
 

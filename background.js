@@ -82,7 +82,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'startSending') {
     stopRequested = false;
     sendInProgress = true;
-    LOG_BUFFER.length = 0; // fresh buffer for each new run
+    LOG_BUFFER.length = 0;
     runSendLoop(msg);
     sendResponse({ ok: true });
   }
@@ -268,10 +268,111 @@ async function generatePdf(htmlContent, filename) {
   }
 }
 
-// Injects a PDF file into iCloud's hidden file input using Page.setFileInputFiles.
-// This bypasses the native file picker entirely (no user gesture needed).
-async function attachPdfToCompose(filePath) {
-  broadcast({ type: 'log', text: 'PDF: locating file input in compose...', level: 'info' });
+// ── Image (PNG / JPEG) generation via Page.captureScreenshot ─────────────────
+
+async function generateImage(htmlContent, format, filename) {
+  const label = format.toUpperCase();
+  broadcast({ type: 'log', text: label + ': opening render tab...', level: 'info' });
+
+  const renderTab = await chrome.tabs.create({ url: 'about:blank', active: false });
+
+  try {
+    await chrome.debugger.attach({ tabId: renderTab.id }, '1.3');
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.enable');
+
+    const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
+    const frameId = frameTree.frameTree.frame.id;
+
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.setDocumentContent', {
+      frameId,
+      html: htmlContent,
+    });
+
+    broadcast({ type: 'log', text: label + ': waiting for render...', level: 'info' });
+    await sleep(3500);
+
+    // Measure full document height so the screenshot captures the whole page
+    const heightResult = await chrome.debugger.sendCommand(
+      { tabId: renderTab.id },
+      'Runtime.evaluate',
+      { expression: 'Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)', returnByValue: true }
+    );
+    const fullHeight = (heightResult && heightResult.result && heightResult.result.value) || 1200;
+
+    // Override viewport to full-page dimensions before capturing
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Emulation.setDeviceMetricsOverride', {
+      width: 1200,
+      height: fullHeight,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
+    broadcast({ type: 'log', text: label + ': capturing screenshot...', level: 'info' });
+
+    const shotResult = await chrome.debugger.sendCommand(
+      { tabId: renderTab.id },
+      'Page.captureScreenshot',
+      {
+        format,
+        quality: format === 'jpeg' ? 88 : undefined,
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width: 1200, height: fullHeight, scale: 1 },
+      }
+    );
+
+    await chrome.debugger.detach({ tabId: renderTab.id });
+
+    if (!shotResult || !shotResult.data) throw new Error('Page.captureScreenshot returned no data');
+
+    broadcast({ type: 'log', text: label + ': saving to disk...', level: 'info' });
+
+    const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._\-]/g, '_');
+    const dataUrl = 'data:' + mimeType + ';base64,' + shotResult.data;
+
+    const downloadId = await new Promise((resolve, reject) => {
+      chrome.downloads.download(
+        { url: dataUrl, filename: safeFilename, saveAs: false, conflictAction: 'overwrite' },
+        (id) => {
+          if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+          else resolve(id);
+        }
+      );
+    });
+
+    const filePath = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error(label + ' download timed out')), 30000);
+      function onChanged(delta) {
+        if (delta.id !== downloadId) return;
+        if (delta.state && delta.state.current === 'complete') {
+          clearTimeout(timeout);
+          chrome.downloads.onChanged.removeListener(onChanged);
+          chrome.downloads.search({ id: downloadId }, (items) => {
+            if (items && items[0] && items[0].filename) resolve(items[0].filename);
+            else reject(new Error('Could not determine ' + label + ' path after download'));
+          });
+        }
+        if (delta.state && delta.state.current === 'interrupted') {
+          clearTimeout(timeout);
+          chrome.downloads.onChanged.removeListener(onChanged);
+          reject(new Error(label + ' download was interrupted'));
+        }
+      }
+      chrome.downloads.onChanged.addListener(onChanged);
+    });
+
+    broadcast({ type: 'log', text: label + ' saved: ' + filePath, level: 'ok' });
+    return filePath;
+
+  } finally {
+    try { await chrome.tabs.remove(renderTab.id); } catch(_) {}
+  }
+}
+
+// ── Generic file attachment (shared by PDF, PNG, JPEG) ────────────────────────
+
+async function attachFileToCompose(filePath, label) {
+  broadcast({ type: 'log', text: label + ': locating file input in compose...', level: 'info' });
 
   // Ask content script to find the file input and return its CSS selector
   const frames = await chrome.webNavigation.getAllFrames({ tabId: mailTabId }).catch(() => []);
@@ -283,14 +384,13 @@ async function attachPdfToCompose(filePath) {
     const result = await sendToFrame(frame.frameId, { action: 'findAttachInput' });
     if (result && result.found) {
       foundFrameId = frame.frameId;
-      broadcast({ type: 'log', text: 'PDF: file input found in frame ' + frame.frameId, level: 'info' });
+      broadcast({ type: 'log', text: label + ': file input found in frame ' + frame.frameId, level: 'info' });
       break;
     }
   }
 
   if (foundFrameId === null) {
-    // Try clicking the attach button first to reveal the input, then retry
-    broadcast({ type: 'log', text: 'PDF: file input not found — clicking attach button...', level: 'info' });
+    broadcast({ type: 'log', text: label + ': file input not found — clicking attach button...', level: 'info' });
     const mailFrameId = await findMailFrame();
     if (mailFrameId !== null) {
       await sendToFrame(mailFrameId, { action: 'clickAttachBtn' });
@@ -302,7 +402,7 @@ async function attachPdfToCompose(filePath) {
     }
   }
 
-  if (foundFrameId === null) throw new Error('PDF attach: file input not found in any frame');
+  if (foundFrameId === null) throw new Error(label + ' attach: file input not found in any frame');
 
   await ensureDebugger();
 
@@ -333,12 +433,10 @@ async function attachPdfToCompose(filePath) {
   );
 
   if (!evalResult || !evalResult.result || !evalResult.result.objectId) {
-    throw new Error('PDF attach: file input element not reachable via Runtime.evaluate');
+    throw new Error(label + ' attach: file input element not reachable via Runtime.evaluate');
   }
 
-  // DOM.setFileInputFiles accepts objectId directly — no need for DOM.requestNode
-  // (which fails cross-frame because nodeId is frame-scoped).
-  broadcast({ type: 'log', text: 'PDF: injecting file path via setFileInputFiles...', level: 'info' });
+  broadcast({ type: 'log', text: label + ': injecting file path via setFileInputFiles...', level: 'info' });
 
   await chrome.debugger.sendCommand(
     { tabId: mailTabId },
@@ -347,16 +445,19 @@ async function attachPdfToCompose(filePath) {
   );
 
   await sleep(1500);
-  broadcast({ type: 'log', text: 'PDF: file attached!', level: 'ok' });
+  broadcast({ type: 'log', text: label + ': file attached!', level: 'ok' });
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, pdfMode, pdfFilename }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename }) {
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
   chunkDelay = chunkDelay || 5;
+  // sendModes is an ordered array like ['html','pdf','png','jpeg'] that rotates per email.
+  // Falls back to ['html'] for backwards compatibility.
+  if (!sendModes || !sendModes.length) sendModes = ['html'];
 
   resetEmailDedup();
   startKeepAlive();
@@ -371,8 +472,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     broadcast({ type: 'log', text: 'ID randomizer ON — Transaction ID, Invoice ID, date and email randomized per email.', level: 'info' });
   if (entityEncode)
     broadcast({ type: 'log', text: 'Entity encoding ON — applied at send time at ' + Math.round((entityRate || 0) * 100) + '% rate.', level: 'info' });
-  if (pdfMode)
-    broadcast({ type: 'log', text: 'PDF mode ON — letter will be printed to PDF and attached (empty body).', level: 'info' });
+  if (sendModes.length > 1 || sendModes[0] !== 'html')
+    broadcast({ type: 'log', text: 'Send modes: ' + sendModes.join(' → ') + ' (rotating per email).', level: 'info' });
 
   let sent = 0;
 
@@ -453,22 +554,31 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         log.forEach(l => broadcast({ type: 'log', text: l, level: 'info' }));
       }
 
-      // Replace {EMAIL} placeholder before PDF generation so it's baked in
+      // Pick this email's send mode from the rotation sequence
+      const sendMode = sendModes[gi % sendModes.length];
+      if (sendModes.length > 1)
+        broadcast({ type: 'log', text: 'Mode: ' + sendMode.toUpperCase(), level: 'info' });
+
+      // Replace {EMAIL} placeholder before rendering so it's baked into the output
       let bodyForSend = body.replace(/\{EMAIL\}/gi, group[0]);
 
-      // Apply entity encoding
-      if (entityEncode && isHtml) {
+      // Apply entity encoding (HTML body mode only — attachment modes skip it)
+      if (entityEncode && isHtml && sendMode === 'html') {
         bodyForSend = applyEntityEncoding(bodyForSend, entityRate || 0.4);
         broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
       }
 
-      // PDF mode: generate PDF from the body HTML, save to disk
-      let pdfFilePath = null;
-      if (pdfMode) {
-        const baseFilename = (pdfFilename || 'newsletter.pdf').replace(/\.pdf$/i, '');
-        const recipientSlug = group[0].replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
-        const uniqueFilename = baseFilename + '_' + recipientSlug + '.pdf';
-        pdfFilePath = await generatePdf(bodyForSend, uniqueFilename);
+      // For attachment modes: render the HTML and save the file before opening compose
+      const recipientSlug = group[0].replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+      const baseFilename = (attachFilename || 'newsletter').replace(/\.(pdf|png|jpe?g)$/i, '');
+      let attachFilePath = null;
+
+      if (sendMode === 'pdf') {
+        attachFilePath = await generatePdf(bodyForSend, baseFilename + '_' + recipientSlug + '.pdf');
+      } else if (sendMode === 'png') {
+        attachFilePath = await generateImage(bodyForSend, 'png', baseFilename + '_' + recipientSlug + '.png');
+      } else if (sendMode === 'jpeg') {
+        attachFilePath = await generateImage(bodyForSend, 'jpeg', baseFilename + '_' + recipientSlug + '.jpg');
       }
 
       // Step 0: Close any stale compose dialog from a previous iteration
@@ -503,12 +613,13 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
 
       await sleep(300);
 
-      if (pdfMode) {
-        // PDF mode: attach the pre-generated PDF, leave body empty
-        await attachPdfToCompose(pdfFilePath);
+      if (sendMode !== 'html') {
+        // Attachment mode: inject pre-generated file, leave body empty
+        const modeLabel = sendMode.toUpperCase();
+        await attachFileToCompose(attachFilePath, modeLabel);
         await sleep(500);
       } else {
-        // Normal mode: nudge RTE iframe into existence via Tab, then fill body
+        // HTML body mode: nudge RTE iframe into existence via Tab, then fill body
         await sendDebuggerTab(mailTabId);
         await sleep(400);
 
