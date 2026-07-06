@@ -291,15 +291,17 @@ async function generateImage(htmlContent, format, filename) {
     broadcast({ type: 'log', text: label + ': waiting for render...', level: 'info' });
     await sleep(3500);
 
-    // Measure full document height so the screenshot captures the whole page
+    // Measure full document height — cap at 16000px (Chrome max texture limit)
     const heightResult = await chrome.debugger.sendCommand(
       { tabId: renderTab.id },
       'Runtime.evaluate',
       { expression: 'Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)', returnByValue: true }
     );
-    const fullHeight = (heightResult && heightResult.result && heightResult.result.value) || 1200;
+    const rawHeight = (heightResult && heightResult.result && heightResult.result.value) || 1200;
+    const fullHeight = Math.min(rawHeight, 16000);
+    broadcast({ type: 'log', text: label + ': page height ' + rawHeight + 'px → capped at ' + fullHeight + 'px', level: 'info' });
 
-    // Override viewport to full-page dimensions before capturing
+    // Override viewport to the (capped) full-page dimensions before capturing
     await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Emulation.setDeviceMetricsOverride', {
       width: 1200,
       height: fullHeight,
@@ -307,18 +309,25 @@ async function generateImage(htmlContent, format, filename) {
       mobile: false,
     });
 
+    // Extra settle time after viewport resize
+    await sleep(800);
+
     broadcast({ type: 'log', text: label + ': capturing screenshot...', level: 'info' });
 
-    const shotResult = await chrome.debugger.sendCommand(
-      { tabId: renderTab.id },
-      'Page.captureScreenshot',
-      {
-        format,
-        quality: format === 'jpeg' ? 88 : undefined,
-        captureBeyondViewport: true,
-        clip: { x: 0, y: 0, width: 1200, height: fullHeight, scale: 1 },
-      }
-    );
+    // Wrap captureScreenshot in a timeout — it silently hangs on very large pages
+    const shotResult = await Promise.race([
+      chrome.debugger.sendCommand(
+        { tabId: renderTab.id },
+        'Page.captureScreenshot',
+        {
+          format,
+          quality: format === 'jpeg' ? 88 : undefined,
+          captureBeyondViewport: true,
+          clip: { x: 0, y: 0, width: 1200, height: fullHeight, scale: 1 },
+        }
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + ': captureScreenshot timed out after 30s')), 30000)),
+    ]);
 
     await chrome.debugger.detach({ tabId: renderTab.id });
 
