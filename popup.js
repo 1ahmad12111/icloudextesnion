@@ -41,6 +41,8 @@ let htmlVersions = [];
 let sendModes = ['html']; // ordered send-mode sequence, rotates per email
 let idDetected = null;
 
+const MODE_LABELS = { html: 'HTML body', pdf: 'PDF attachment', png: 'PNG attachment', jpeg: 'JPEG attachment' };
+
 // applyEntityEncoding() lives in randomizer.js (shared with background.js)
 
 // ── ID detection (runs in popup — has DOM access for decodeEntities) ──────────
@@ -247,8 +249,6 @@ function toggleEntityRate() {
 function toggleIdPanel() {
   idRandomizePanelEl.style.display = idRandomizeEl.checked ? '' : 'none';
 }
-
-const MODE_LABELS = { html: 'HTML body', pdf: 'PDF attachment', png: 'PNG attachment', jpeg: 'JPEG attachment' };
 
 function renderModeList() {
   modeListEl.innerHTML = '';
