@@ -345,22 +345,14 @@ async function attachPdfToCompose(filePath) {
     throw new Error('PDF attach: file input element not reachable via Runtime.evaluate');
   }
 
-  const nodeResult = await chrome.debugger.sendCommand(
-    { tabId: mailTabId },
-    'DOM.requestNode',
-    { objectId: evalResult.result.objectId }
-  );
-
-  if (!nodeResult || !nodeResult.nodeId) {
-    throw new Error('PDF attach: DOM.requestNode returned no nodeId');
-  }
-
+  // DOM.setFileInputFiles accepts objectId directly — no need for DOM.requestNode
+  // (which fails cross-frame because nodeId is frame-scoped).
   broadcast({ type: 'log', text: 'PDF: injecting file path via setFileInputFiles...', level: 'info' });
 
   await chrome.debugger.sendCommand(
     { tabId: mailTabId },
     'DOM.setFileInputFiles',
-    { files: [filePath], nodeId: nodeResult.nodeId }
+    { files: [filePath], objectId: evalResult.result.objectId }
   );
 
   await sleep(1500);
