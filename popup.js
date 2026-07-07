@@ -25,6 +25,10 @@ const modeAddEl       = document.getElementById('modeAdd');
 const modeAddBtnEl    = document.getElementById('modeAddBtn');
 const modeAttachRowEl = document.getElementById('modeAttachRow');
 const attachFilenameEl= document.getElementById('attachFilename');
+const mailProviderEl  = document.getElementById('mailProvider');
+const bccModeRowEl    = document.getElementById('bccModeRow');
+const bccModeEl       = document.getElementById('bccMode');
+const bccModeHintEl   = document.getElementById('bccModeHint');
 const chunkEnabledEl  = document.getElementById('chunkEnabled');
 const chunkPanelEl    = document.getElementById('chunkPanel');
 const chunkSizeEl     = document.getElementById('chunkSize');
@@ -169,7 +173,7 @@ chrome.storage.local.get([
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
   'idRandomize', 'idDetected', 'fixedDateIso',
   'chunkEnabled', 'chunkSize', 'chunkDelay',
-  'sendModes', 'attachFilename'
+  'sendModes', 'attachFilename', 'mailProvider', 'bccMode'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -191,6 +195,8 @@ chrome.storage.local.get([
   if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
   if (data.sendModes && data.sendModes.length) sendModes = data.sendModes;
   if (data.attachFilename) attachFilenameEl.value = data.attachFilename;
+  if (data.mailProvider) { mailProviderEl.value = data.mailProvider; toggleBccModeRow(); }
+  if (data.bccMode) bccModeEl.checked = true;
   renderModeList();
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
@@ -218,6 +224,8 @@ function saveDraft() {
     chunkDelay:    Number(chunkDelayEl.value) || 5,
     sendModes,
     attachFilename: attachFilenameEl.value.trim() || 'newsletter',
+    mailProvider:  mailProviderEl.value,
+    bccMode:       bccModeEl.checked,
   });
 }
 
@@ -225,6 +233,8 @@ function saveDraft() {
   el.addEventListener('change', saveDraft)
 );
 randomizeEl.addEventListener('change', saveDraft);
+mailProviderEl.addEventListener('change', () => { toggleBccModeRow(); saveDraft(); });
+bccModeEl.addEventListener('change', () => { toggleBccModeRow(); saveDraft(); });
 entityEncodeEl.addEventListener('change', () => { toggleEntityRate(); saveDraft(); });
 entityRateEl.addEventListener('input', () => {
   entityRateValEl.textContent = entityRateEl.value + '%';
@@ -239,6 +249,13 @@ chunkSizeEl.addEventListener('input',  () => { updateChunkHint(); saveDraft(); }
 chunkDelayEl.addEventListener('input', () => { updateChunkHint(); saveDraft(); });
 
 // ── Toggle helpers ────────────────────────────────────────────────────────────
+
+function toggleBccModeRow() {
+  const isTitan = mailProviderEl.value === 'titan';
+  bccModeRowEl.style.display = isTitan ? '' : 'none';
+  if (!isTitan) bccModeEl.checked = false;
+  if (bccModeHintEl) bccModeHintEl.style.display = (isTitan && bccModeEl.checked && !chunkEnabledEl.checked) ? '' : 'none';
+}
 
 function toggleEntityRate() {
   const on = entityEncodeEl.checked;
@@ -312,6 +329,7 @@ modeAddBtnEl.addEventListener('click', () => {
 function toggleChunkPanel() {
   chunkPanelEl.style.display = chunkEnabledEl.checked ? 'flex' : 'none';
   if (chunkEnabledEl.checked) updateChunkHint();
+  toggleBccModeRow();
 }
 
 function updateChunkHint() {
@@ -463,6 +481,8 @@ async function startSending() {
   const chunkSize      = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
   const chunkDelay     = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
   const attachFilename = attachFilenameEl.value.trim() || 'newsletter';
+  const mailProvider   = mailProviderEl.value || 'icloud';
+  const bccMode        = bccModeEl.checked;
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
@@ -497,7 +517,8 @@ async function startSending() {
     randomize, entityEncode, entityRate,
     idRandomize, idDetected, fixedDateIso,
     chunkEnabled, chunkSize, chunkDelay,
-    sendModes, attachFilename
+    sendModes, attachFilename,
+    mailProvider, bccMode
   });
 }
 

@@ -64,6 +64,23 @@
 
     <section class="card">
       <h2>3. Settings</h2>
+
+      <label style="margin-bottom:8px">Mail provider
+        <select id="mailProvider" style="margin-left:8px;padding:4px 8px;font-size:13px;border:1px solid #ccc;border-radius:6px;">
+          <option value="icloud">iCloud Mail</option>
+          <option value="titan">Titan Mail</option>
+        </select>
+      </label>
+
+      <div id="bccModeRow" style="display:none">
+        <label class="toggle-label" style="border-top:none;padding-top:0">
+          <input type="checkbox" id="bccMode" />
+          <span>BCC mode</span>
+          <span class="hint">&nbsp;— put all chunk recipients in BCC (chunk mode required)</span>
+        </label>
+        <p class="hint" style="padding-left:20px;margin-top:2px;color:#e67e22" id="bccModeHint" style="display:none">⚠ BCC mode only works with chunk sending enabled. Individual {EMAIL} substitution is not possible in BCC mode.</p>
+      </div>
+
       <label>Delay between emails (seconds)<input type="number" id="delay" value="5" min="1" max="60" /></label>
 
       <label class="toggle-label" style="border-top:none;padding-top:0;flex-wrap:nowrap">
