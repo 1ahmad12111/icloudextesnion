@@ -341,20 +341,23 @@ function randomizeIds(html, detected, fixedDateIso) {
 
   const { txnValue, invValue, dateValue, sellerName, emailValue, emailHref } = detected;
 
+  let newTxnId = null;
+  let newInvId = null;
+
   // Transaction ID
   if (txnValue) {
-    const newTxn = generateMatchingId(txnValue);
-    const r = replaceValue(out, txnValue, newTxn);
+    newTxnId = generateMatchingId(txnValue);
+    const r = replaceValue(out, txnValue, newTxnId);
     out = r.out;
-    log.push('TxnID: ' + txnValue + ' → ' + newTxn + ' (' + r.count + ' replacements)');
+    log.push('TxnID: ' + txnValue + ' → ' + newTxnId + ' (' + r.count + ' replacements)');
   }
 
   // Invoice / Order ID
   if (invValue) {
-    const newInv = generateMatchingId(invValue);
-    const r = replaceValue(out, invValue, newInv);
+    newInvId = generateMatchingId(invValue);
+    const r = replaceValue(out, invValue, newInvId);
     out = r.out;
-    log.push('InvID: ' + invValue + ' → ' + newInv + ' (' + r.count + ' replacements)');
+    log.push('InvID: ' + invValue + ' → ' + newInvId + ' (' + r.count + ' replacements)');
   }
 
   // Date (fixed, user-set)
@@ -402,5 +405,5 @@ function randomizeIds(html, detected, fixedDateIso) {
     if (emailReplaced) log.push('Email: ' + primaryEmail + ' → ' + newEmail);
   }
 
-  return { out, log };
+  return { out, log, newTxnId, newInvId };
 }

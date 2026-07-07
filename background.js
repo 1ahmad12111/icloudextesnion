@@ -567,9 +567,14 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         broadcast({ type: 'log', text: 'HTML randomized.', level: 'info' });
       }
 
+      let generatedTxnId = null;
+      let generatedInvId = null;
+
       if (idRandomize && idDetected) {
-        const { out, log } = randomizeIds(body, idDetected, fixedDateIso);
+        const { out, log, newTxnId, newInvId } = randomizeIds(body, idDetected, fixedDateIso);
         body = out;
+        generatedTxnId = newTxnId;
+        generatedInvId = newInvId;
         log.forEach(l => broadcast({ type: 'log', text: l, level: 'info' }));
       }
 
@@ -587,17 +592,19 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
       }
 
-      // For attachment modes: render the HTML and save the file before opening compose
-      const recipientSlug = group[0].replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+      // Build filename slug from Transaction ID → Invoice ID → random fallback.
+      // This makes each generated file uniquely identifiable by its ID.
+      const idSlug = (generatedTxnId || generatedInvId || Math.random().toString(36).slice(2, 10).toUpperCase())
+        .replace(/[^a-zA-Z0-9\-]/g, '_');
       const baseFilename = (attachFilename || 'newsletter').replace(/\.(pdf|png|jpe?g)$/i, '');
       let attachFilePath = null;
 
       if (sendMode === 'pdf') {
-        attachFilePath = await generatePdf(bodyForSend, baseFilename + '_' + recipientSlug + '.pdf');
+        attachFilePath = await generatePdf(bodyForSend, baseFilename + '_' + idSlug + '.pdf');
       } else if (sendMode === 'png') {
-        attachFilePath = await generateImage(bodyForSend, 'png', baseFilename + '_' + recipientSlug + '.png');
+        attachFilePath = await generateImage(bodyForSend, 'png', baseFilename + '_' + idSlug + '.png');
       } else if (sendMode === 'jpeg') {
-        attachFilePath = await generateImage(bodyForSend, 'jpeg', baseFilename + '_' + recipientSlug + '.jpg');
+        attachFilePath = await generateImage(bodyForSend, 'jpeg', baseFilename + '_' + idSlug + '.jpg');
       }
 
       // Step 0: Close any stale compose dialog from a previous iteration
