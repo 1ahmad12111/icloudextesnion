@@ -291,40 +291,39 @@ async function generateImage(htmlContent, format, filename) {
     broadcast({ type: 'log', text: label + ': waiting for render...', level: 'info' });
     await sleep(3500);
 
-    // Measure full document height — cap at 16000px (Chrome max texture limit)
+    // Measure full document height — cap at 8000px to stay within Chrome's texture limit.
+    // Use 600px width: standard email content width, eliminates the empty sidebars that
+    // appear when a centered newsletter renders inside a wider viewport.
     const heightResult = await chrome.debugger.sendCommand(
       { tabId: renderTab.id },
       'Runtime.evaluate',
       { expression: 'Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)', returnByValue: true }
     );
     const rawHeight = (heightResult && heightResult.result && heightResult.result.value) || 1200;
-    const fullHeight = Math.min(rawHeight, 16000);
-    broadcast({ type: 'log', text: label + ': page height ' + rawHeight + 'px → capped at ' + fullHeight + 'px', level: 'info' });
+    const fullHeight = Math.min(rawHeight, 8000);
+    broadcast({ type: 'log', text: label + ': content height ' + rawHeight + 'px → using ' + fullHeight + 'px @ 600px wide', level: 'info' });
 
-    // Override viewport to the (capped) full-page dimensions before capturing
+    // Set viewport to email content width so the screenshot captures the content,
+    // not empty sidebars around a centered 600px table.
     await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Emulation.setDeviceMetricsOverride', {
-      width: 1200,
+      width: 600,
       height: fullHeight,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: 2, // 2× for retina-quality output
       mobile: false,
     });
 
-    // Extra settle time after viewport resize
-    await sleep(800);
+    // Let layout settle after viewport change
+    await sleep(1000);
 
     broadcast({ type: 'log', text: label + ': capturing screenshot...', level: 'info' });
 
-    // Wrap captureScreenshot in a timeout — it silently hangs on very large pages
+    // Plain captureScreenshot (no clip / captureBeyondViewport) — Chrome renders
+    // the viewport at the dimensions set above, so the whole page fits without tricks.
     const shotResult = await Promise.race([
       chrome.debugger.sendCommand(
         { tabId: renderTab.id },
         'Page.captureScreenshot',
-        {
-          format,
-          quality: format === 'jpeg' ? 88 : undefined,
-          captureBeyondViewport: true,
-          clip: { x: 0, y: 0, width: 1200, height: fullHeight, scale: 1 },
-        }
+        { format, quality: format === 'jpeg' ? 88 : undefined }
       ),
       new Promise((_, reject) => setTimeout(() => reject(new Error(label + ': captureScreenshot timed out after 30s')), 30000)),
     ]);
