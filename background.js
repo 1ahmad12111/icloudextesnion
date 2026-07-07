@@ -465,15 +465,17 @@ async function captureImageData(htmlContent, format) {
 // image-wrapped links are intercepted by iCloud's image viewer and never fire.
 function buildInlineImageBody(base64, mimeType, phoneNumber) {
   const displayNumber = phoneNumber.trim();
-  // iCloud Mail strips href attributes from <a> tags in received HTML, making
-  // custom tel: buttons non-functional. Instead, render the number as plain
-  // visible text — iOS Mail's data detector auto-detects phone numbers and
-  // makes them natively tappable (blue underline, tap → call prompt).
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;">` +
+  // iCloud strips href attributes, so <a href="tel:..."> buttons are dead.
+  // Solution: overlay the phone number as real visible text on top of the image
+  // using position:absolute. iOS Mail's data detector scans visible text and
+  // auto-links the number — tapping the overlay dials without any href needed.
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;">` +
+    `<div style="position:relative;display:block;width:100%;font-family:Arial,sans-serif;">` +
     `<img src="data:${mimeType};base64,${base64}" alt="" style="display:block;width:100%;max-width:100%;border:0;" />` +
-    `<div style="text-align:center;padding:18px 0 24px;background:#f5f5f7;">` +
-    `<p style="margin:0 0 6px;font-size:13px;color:#555;">For cancellations, refunds &amp; assistance</p>` +
-    `<p style="margin:0;font-size:22px;font-weight:bold;color:#000;letter-spacing:0.5px;">${displayNumber}</p>` +
+    `<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.55);padding:14px 16px;text-align:center;">` +
+    `<span style="display:block;color:#fff;font-size:13px;margin-bottom:4px;">Tap to call us</span>` +
+    `<span style="display:block;color:#fff;font-size:22px;font-weight:bold;letter-spacing:1px;">${displayNumber}</span>` +
+    `</div>` +
     `</div>` +
     `</body></html>`;
 }
