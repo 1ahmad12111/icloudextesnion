@@ -283,9 +283,17 @@ async function generateImage(htmlContent, format, filename) {
     const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
     const frameId = frameTree.frameTree.frame.id;
 
+    // Prepend a CSS reset so the screenshot has no default browser margins,
+    // padding, or background — prevents the black border around the content.
+    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;}</style>';
+    const htmlWithReset = htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss);
+    const injectedHtml = htmlWithReset === htmlContent
+      ? resetCss + htmlContent  // no <head> found — prepend anyway
+      : htmlWithReset;
+
     await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.setDocumentContent', {
       frameId,
-      html: htmlContent,
+      html: injectedHtml,
     });
 
     broadcast({ type: 'log', text: label + ': waiting for render...', level: 'info' });
