@@ -459,11 +459,19 @@ async function captureImageData(htmlContent, format) {
   }
 }
 
-// Builds the HTML body for inline image mode:
-// A full-width image wrapped in a tel: link — clicking anywhere dials the number.
+// Builds the HTML body for inline image mode.
+// The image is displayed full-width. Below it, a plain <a href="tel:..."> text
+// link is added — iCloud Mail reliably makes text tel: links tappable, whereas
+// image-wrapped links are intercepted by iCloud's image viewer and never fire.
 function buildInlineImageBody(base64, mimeType, phoneNumber) {
   const telHref = 'tel:' + phoneNumber.replace(/[^+\d]/g, '');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;"><a href="${telHref}" style="display:block;border:0;text-decoration:none;"><img src="data:${mimeType};base64,${base64}" alt="" style="display:block;width:100%;max-width:100%;border:0;" /></a></body></html>`;
+  const displayNumber = phoneNumber.trim();
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;">` +
+    `<img src="data:${mimeType};base64,${base64}" alt="" style="display:block;width:100%;max-width:100%;border:0;" />` +
+    `<div style="text-align:center;padding:16px 0 20px;">` +
+    `<a href="${telHref}" style="display:inline-block;background:#0071e3;color:#fff;font-size:16px;font-weight:bold;text-decoration:none;padding:12px 32px;border-radius:8px;">` +
+    `&#128222; Call ${displayNumber}</a></div>` +
+    `</body></html>`;
 }
 
 // ── Generic file attachment (shared by PDF, PNG, JPEG) ────────────────────────
