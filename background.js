@@ -190,11 +190,14 @@ async function generatePdf(htmlContent, filename) {
     const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
     const frameId = frameTree.frameTree.frame.id;
 
-    // Inject HTML directly — avoids data: URL restrictions (blocked scripts, null origin)
-    // so the newsletter renders exactly as in a normal browser tab.
+    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;}</style>';
+    const pdfHtml = htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss) !== htmlContent
+      ? htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss)
+      : resetCss + htmlContent;
+
     await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.setDocumentContent', {
       frameId,
-      html: htmlContent,
+      html: pdfHtml,
     });
 
     broadcast({ type: 'log', text: 'PDF: tab loaded, waiting for render...', level: 'info' });
