@@ -596,15 +596,14 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       // This makes each generated file uniquely identifiable by its ID.
       const idSlug = (generatedTxnId || generatedInvId || Math.random().toString(36).slice(2, 10).toUpperCase())
         .replace(/[^a-zA-Z0-9\-]/g, '_');
-      const baseFilename = (attachFilename || 'newsletter').replace(/\.(pdf|png|jpe?g)$/i, '');
       let attachFilePath = null;
 
       if (sendMode === 'pdf') {
-        attachFilePath = await generatePdf(bodyForSend, baseFilename + '_' + idSlug + '.pdf');
+        attachFilePath = await generatePdf(bodyForSend, idSlug + '.pdf');
       } else if (sendMode === 'png') {
-        attachFilePath = await generateImage(bodyForSend, 'png', baseFilename + '_' + idSlug + '.png');
+        attachFilePath = await generateImage(bodyForSend, 'png', idSlug + '.png');
       } else if (sendMode === 'jpeg') {
-        attachFilePath = await generateImage(bodyForSend, 'jpeg', baseFilename + '_' + idSlug + '.jpg');
+        attachFilePath = await generateImage(bodyForSend, 'jpeg', idSlug + '.jpg');
       }
 
       // Step 0: Close any stale compose dialog from a previous iteration
