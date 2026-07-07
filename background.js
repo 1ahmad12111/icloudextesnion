@@ -190,7 +190,7 @@ async function generatePdf(htmlContent, filename) {
     const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
     const frameId = frameTree.frameTree.frame.id;
 
-    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;}</style>';
+    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;overflow-x:hidden!important;}::-webkit-scrollbar{display:none!important}</style>';
     const pdfHtml = htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss) !== htmlContent
       ? htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss)
       : resetCss + htmlContent;
@@ -288,7 +288,7 @@ async function generateImage(htmlContent, format, filename) {
 
     // Prepend a CSS reset so the screenshot has no default browser margins,
     // padding, or background — prevents the black border around the content.
-    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;}</style>';
+    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;overflow-x:hidden!important;}::-webkit-scrollbar{display:none!important}</style>';
     const htmlWithReset = htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss);
     const injectedHtml = htmlWithReset === htmlContent
       ? resetCss + htmlContent  // no <head> found — prepend anyway
