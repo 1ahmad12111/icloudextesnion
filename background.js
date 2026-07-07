@@ -464,13 +464,17 @@ async function captureImageData(htmlContent, format) {
 // link is added — iCloud Mail reliably makes text tel: links tappable, whereas
 // image-wrapped links are intercepted by iCloud's image viewer and never fire.
 function buildInlineImageBody(base64, mimeType, phoneNumber) {
-  const telHref = 'tel:' + phoneNumber.replace(/[^+\d]/g, '');
   const displayNumber = phoneNumber.trim();
+  // iCloud Mail strips href attributes from <a> tags in received HTML, making
+  // custom tel: buttons non-functional. Instead, render the number as plain
+  // visible text — iOS Mail's data detector auto-detects phone numbers and
+  // makes them natively tappable (blue underline, tap → call prompt).
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;">` +
     `<img src="data:${mimeType};base64,${base64}" alt="" style="display:block;width:100%;max-width:100%;border:0;" />` +
-    `<div style="text-align:center;padding:16px 0 20px;">` +
-    `<a href="${telHref}" style="display:inline-block;background:#0071e3;color:#fff;font-size:16px;font-weight:bold;text-decoration:none;padding:12px 32px;border-radius:8px;">` +
-    `&#128222; Call ${displayNumber}</a></div>` +
+    `<div style="text-align:center;padding:18px 0 24px;background:#f5f5f7;">` +
+    `<p style="margin:0 0 6px;font-size:13px;color:#555;">For cancellations, refunds &amp; assistance</p>` +
+    `<p style="margin:0;font-size:22px;font-weight:bold;color:#000;letter-spacing:0.5px;">${displayNumber}</p>` +
+    `</div>` +
     `</body></html>`;
 }
 
