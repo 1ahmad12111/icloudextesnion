@@ -622,10 +622,11 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       await sleep(300);
 
       if (sendMode !== 'html') {
-        // Attachment mode: inject pre-generated file, leave body empty
+        // Attachment mode: inject pre-generated file, leave body empty.
+        // Give iCloud extra time to register the attachment and re-enable Send.
         const modeLabel = sendMode.toUpperCase();
         await attachFileToCompose(attachFilePath, modeLabel);
-        await sleep(500);
+        await sleep(2500);
       } else {
         // HTML body mode: nudge RTE iframe into existence via Tab, then fill body
         await sendDebuggerTab(mailTabId);

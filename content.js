@@ -319,6 +319,15 @@
       return { error: 'Send button not found. Labels: ' + JSON.stringify(labels) };
     }
 
+    // Poll up to 6s for the send button to become enabled.
+    // After an attachment is injected iCloud needs a moment to register it.
+    const enableDeadline = Date.now() + 6000;
+    while (Date.now() < enableDeadline) {
+      const disabled = sendBtn.hasAttribute('disabled') ||
+        sendBtn.getAttribute('aria-disabled') === 'true';
+      if (!disabled) break;
+      await sleep(400);
+    }
     const isDisabled = sendBtn.hasAttribute('disabled') ||
       sendBtn.getAttribute('aria-disabled') === 'true';
     if (isDisabled) return { error: 'Send button is disabled — To token may not be confirmed' };
