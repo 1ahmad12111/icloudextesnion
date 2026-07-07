@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "iCloud Newsletter Sender",
-  "version": "1.6.0",
-  "description": "Send your newsletter to a list of emails via iCloud Mail, one by one with a delay.",
+  "version": "1.7.0",
+  "description": "Send your newsletter via iCloud Mail or Titan Mail, one by one with a delay.",
   "permissions": [
     "storage",
     "tabs",
@@ -16,7 +16,8 @@
   ],
   "host_permissions": [
     "https://*.icloud.com/*",
-    "https://*.icloud-sandbox.com/*"
+    "https://*.icloud-sandbox.com/*",
+    "https://*.titan.email/*"
   ],
   "action": {},
   "background": {
@@ -26,7 +27,8 @@
     {
       "matches": [
         "https://*.icloud.com/*",
-        "https://*.icloud-sandbox.com/*"
+        "https://*.icloud-sandbox.com/*",
+        "https://*.titan.email/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",
