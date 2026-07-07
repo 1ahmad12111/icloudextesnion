@@ -447,6 +447,7 @@ function setUI(sending) {
 }
 
 async function startSending() {
+  if (isSending) return; // guard against double-click / reopened popup race
   const emails     = getEmails();
   const subjects   = getSubjects();
   const body       = bodyEl.value.trim();

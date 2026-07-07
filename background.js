@@ -80,6 +80,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.action === 'startSending') {
+    if (sendInProgress) {
+      // A loop is already running — ignore duplicate start to prevent two
+      // concurrent loops attaching files to the same compose window.
+      broadcast({ type: 'log', text: '⚠ Send already in progress — ignoring duplicate start.', level: 'info' });
+      sendResponse({ ok: false, reason: 'already_running' });
+      return true;
+    }
     stopRequested = false;
     sendInProgress = true;
     LOG_BUFFER.length = 0;
