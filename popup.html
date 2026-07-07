@@ -48,6 +48,8 @@
             <option value="pdf">PDF attachment</option>
             <option value="png">PNG attachment</option>
             <option value="jpeg">JPEG attachment</option>
+            <option value="png-inline">PNG inline (click-to-call)</option>
+            <option value="jpeg-inline">JPEG inline (click-to-call)</option>
           </select>
           <button type="button" id="modeAddBtn" class="file-btn" style="padding:4px 12px;font-size:12px">+ Add</button>
         </div>
@@ -58,6 +60,13 @@
             <span class="hint">&nbsp;(extension added automatically)</span>
           </label>
           <p class="hint" style="margin-top:4px;color:#0071e3">⚡ Attachment modes convert your HTML to PDF/PNG/JPEG via the debugger then inject it — no file picker.</p>
+        </div>
+        <div id="modeInlineRow" style="display:none;margin-top:8px">
+          <label style="font-size:12px;gap:6px;display:flex;align-items:center;">
+            Click-to-call number:&nbsp;
+            <input type="tel" id="phoneNumber" placeholder="+1234567890" style="width:160px;padding:3px 6px;font-size:12px;border:1px solid #ccc;border-radius:4px;" />
+          </label>
+          <p class="hint" style="margin-top:4px;color:#0071e3">⚡ Inline modes embed the image in the email body — tapping the image dials this number.</p>
         </div>
       </div>
     </section>

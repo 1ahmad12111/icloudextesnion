@@ -388,6 +388,84 @@ async function generateImage(htmlContent, format, filename) {
   }
 }
 
+// ── Inline image capture (PNG / JPEG) — returns base64 + mimeType, no download ─
+// Used by png-inline / jpeg-inline modes: the base64 is embedded directly in
+// the email HTML body so clicking the image dials a phone number.
+
+async function captureImageData(htmlContent, format) {
+  const label = format.toUpperCase() + '-INLINE';
+  broadcast({ type: 'log', text: label + ': opening render tab...', level: 'info' });
+
+  const renderTab = await chrome.tabs.create({ url: 'about:blank', active: false });
+
+  try {
+    await chrome.debugger.attach({ tabId: renderTab.id }, '1.3');
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.enable');
+
+    const frameTree = await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.getFrameTree');
+    const frameId = frameTree.frameTree.frame.id;
+
+    const resetCss = '<style>*{box-sizing:border-box}html,body{margin:0!important;padding:0!important;background:#ffffff!important;border:0!important;overflow-x:hidden!important;}::-webkit-scrollbar{display:none!important}</style>';
+    const htmlWithReset = htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss) !== htmlContent
+      ? htmlContent.replace(/<head([^>]*)>/i, '<head$1>' + resetCss)
+      : resetCss + htmlContent;
+
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Page.setDocumentContent', {
+      frameId,
+      html: htmlWithReset,
+    });
+
+    broadcast({ type: 'log', text: label + ': waiting for render...', level: 'info' });
+    await sleep(3500);
+
+    const heightResult = await chrome.debugger.sendCommand(
+      { tabId: renderTab.id },
+      'Runtime.evaluate',
+      { expression: 'Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)', returnByValue: true }
+    );
+    const rawHeight = (heightResult && heightResult.result && heightResult.result.value) || 1200;
+    const fullHeight = Math.min(rawHeight, 8000);
+
+    await chrome.debugger.sendCommand({ tabId: renderTab.id }, 'Emulation.setDeviceMetricsOverride', {
+      width: 600,
+      height: fullHeight,
+      deviceScaleFactor: 2,
+      mobile: false,
+    });
+    await sleep(1000);
+
+    broadcast({ type: 'log', text: label + ': capturing...', level: 'info' });
+
+    const shotResult = await Promise.race([
+      chrome.debugger.sendCommand(
+        { tabId: renderTab.id },
+        'Page.captureScreenshot',
+        { format, quality: format === 'jpeg' ? 88 : undefined }
+      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(label + ': capture timed out after 30s')), 30000)),
+    ]);
+
+    await chrome.debugger.detach({ tabId: renderTab.id });
+
+    if (!shotResult || !shotResult.data) throw new Error(label + ': captureScreenshot returned no data');
+
+    broadcast({ type: 'log', text: label + ': image captured, building inline body...', level: 'info' });
+
+    const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    return { base64: shotResult.data, mimeType };
+
+  } finally {
+    try { await chrome.tabs.remove(renderTab.id); } catch(_) {}
+  }
+}
+
+// Builds the HTML body for inline image mode:
+// A full-width image wrapped in a tel: link — clicking anywhere dials the number.
+function buildInlineImageBody(base64, mimeType, phoneNumber) {
+  const telHref = 'tel:' + phoneNumber.replace(/[^+\d]/g, '');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#fff;"><a href="${telHref}" style="display:block;border:0;text-decoration:none;"><img src="data:${mimeType};base64,${base64}" alt="" style="display:block;width:100%;max-width:100%;border:0;" /></a></body></html>`;
+}
+
 // ── Generic file attachment (shared by PDF, PNG, JPEG) ────────────────────────
 
 async function attachFileToCompose(filePath, label) {
@@ -469,7 +547,7 @@ async function attachFileToCompose(filePath, label) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename, phoneNumber }) {
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
@@ -600,6 +678,13 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         attachFilePath = await generateImage(bodyForSend, 'jpeg', baseFilename + '_' + recipientSlug + '.jpg');
       }
 
+      // For inline modes: capture image data now (before opening compose)
+      let inlineImageData = null;
+      if (sendMode === 'png-inline' || sendMode === 'jpeg-inline') {
+        const fmt = sendMode === 'png-inline' ? 'png' : 'jpeg';
+        inlineImageData = await captureImageData(bodyForSend, fmt);
+      }
+
       // Step 0: Close any stale compose dialog from a previous iteration
       await sendToFrame(mailFrameId, { action: 'closeCompose' });
       await sleep(400);
@@ -632,12 +717,25 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
 
       await sleep(300);
 
-      if (sendMode !== 'html') {
+      if (sendMode === 'pdf' || sendMode === 'png' || sendMode === 'jpeg') {
         // Attachment mode: inject pre-generated file, leave body empty.
         // Give iCloud extra time to register the attachment and re-enable Send.
         const modeLabel = sendMode.toUpperCase();
         await attachFileToCompose(attachFilePath, modeLabel);
         await sleep(2500);
+      } else if (sendMode === 'png-inline' || sendMode === 'jpeg-inline') {
+        // Inline image mode: embed image as HTML body with a tel: click-to-call link
+        const inlineBody = buildInlineImageBody(inlineImageData.base64, inlineImageData.mimeType, phoneNumber || '');
+        broadcast({ type: 'log', text: sendMode.toUpperCase() + ': filling body with inline image...', level: 'info' });
+        await sendDebuggerTab(mailTabId);
+        await sleep(400);
+        const rteFrameId = await findRteFrame(10000);
+        if (rteFrameId === null) throw new Error('Body editor iframe not found');
+        broadcast({ type: 'log', text: 'RTE frame found: ' + rteFrameId, level: 'info' });
+        const bodyResult = await sendToFrame(rteFrameId, { action: 'fillBody', body: inlineBody, isHtml: true });
+        if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
+        broadcast({ type: 'log', text: 'Inline image body filled.', level: 'ok' });
+        await sleep(500);
       } else {
         // HTML body mode: nudge RTE iframe into existence via Tab, then fill body
         await sendDebuggerTab(mailTabId);

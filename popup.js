@@ -25,6 +25,8 @@ const modeAddEl       = document.getElementById('modeAdd');
 const modeAddBtnEl    = document.getElementById('modeAddBtn');
 const modeAttachRowEl = document.getElementById('modeAttachRow');
 const attachFilenameEl= document.getElementById('attachFilename');
+const modeInlineRowEl = document.getElementById('modeInlineRow');
+const phoneNumberEl   = document.getElementById('phoneNumber');
 const chunkEnabledEl  = document.getElementById('chunkEnabled');
 const chunkPanelEl    = document.getElementById('chunkPanel');
 const chunkSizeEl     = document.getElementById('chunkSize');
@@ -41,7 +43,7 @@ let htmlVersions = [];
 let sendModes = ['html']; // ordered send-mode sequence, rotates per email
 let idDetected = null;
 
-const MODE_LABELS = { html: 'HTML body', pdf: 'PDF attachment', png: 'PNG attachment', jpeg: 'JPEG attachment' };
+const MODE_LABELS = { html: 'HTML body', pdf: 'PDF attachment', png: 'PNG attachment', jpeg: 'JPEG attachment', 'png-inline': 'PNG inline (click-to-call)', 'jpeg-inline': 'JPEG inline (click-to-call)' };
 
 // applyEntityEncoding() lives in randomizer.js (shared with background.js)
 
@@ -169,7 +171,7 @@ chrome.storage.local.get([
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
   'idRandomize', 'idDetected', 'fixedDateIso',
   'chunkEnabled', 'chunkSize', 'chunkDelay',
-  'sendModes', 'attachFilename'
+  'sendModes', 'attachFilename', 'phoneNumber'
 ], (data) => {
   if (data.subjectList)   subjectListEl.value  = data.subjectList;
   if (data.body)          bodyEl.value         = data.body;
@@ -191,6 +193,7 @@ chrome.storage.local.get([
   if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
   if (data.sendModes && data.sendModes.length) sendModes = data.sendModes;
   if (data.attachFilename) attachFilenameEl.value = data.attachFilename;
+  if (data.phoneNumber) phoneNumberEl.value = data.phoneNumber;
   renderModeList();
   if (data.htmlVersions && data.htmlVersions.length) {
     htmlVersions = data.htmlVersions;
@@ -218,6 +221,7 @@ function saveDraft() {
     chunkDelay:    Number(chunkDelayEl.value) || 5,
     sendModes,
     attachFilename: attachFilenameEl.value.trim() || 'newsletter',
+    phoneNumber: phoneNumberEl.value.trim(),
   });
 }
 
@@ -231,6 +235,7 @@ entityRateEl.addEventListener('input', () => {
   saveDraft();
 });
 attachFilenameEl.addEventListener('input', saveDraft);
+phoneNumberEl.addEventListener('input', saveDraft);
 idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
 idDateInputEl.addEventListener('change', saveDraft);
 idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
@@ -252,8 +257,10 @@ function toggleIdPanel() {
 
 function renderModeList() {
   modeListEl.innerHTML = '';
-  const hasAttach = sendModes.some(m => m !== 'html');
+  const hasAttach = sendModes.some(m => m === 'pdf' || m === 'png' || m === 'jpeg');
   modeAttachRowEl.style.display = hasAttach ? '' : 'none';
+  const hasInline = sendModes.some(m => m === 'png-inline' || m === 'jpeg-inline');
+  modeInlineRowEl.style.display = hasInline ? '' : 'none';
 
   sendModes.forEach((mode, i) => {
     const row = document.createElement('div');
@@ -462,12 +469,18 @@ async function startSending() {
   const chunkSize      = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
   const chunkDelay     = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
   const attachFilename = attachFilenameEl.value.trim() || 'newsletter';
+  const phoneNumber    = phoneNumberEl.value.trim();
 
   if (!emails.length)   { alert('Please enter at least one email address.'); return; }
   if (!subjects.length) { alert('Please enter at least one subject line.'); return; }
   const needsHtml = sendModes.some(m => m !== 'html');
   if (needsHtml && !htmlVersions.length && !body) {
-    alert('PDF/PNG/JPEG modes require an HTML version to be loaded.');
+    alert('PDF/PNG/JPEG/inline modes require an HTML version to be loaded.');
+    return;
+  }
+  const hasInlineMode = sendModes.some(m => m === 'png-inline' || m === 'jpeg-inline');
+  if (hasInlineMode && !phoneNumber) {
+    alert('PNG/JPEG inline (click-to-call) mode requires a phone number. Please enter it in the "Click-to-call number" field.');
     return;
   }
 
@@ -496,7 +509,7 @@ async function startSending() {
     randomize, entityEncode, entityRate,
     idRandomize, idDetected, fixedDateIso,
     chunkEnabled, chunkSize, chunkDelay,
-    sendModes, attachFilename
+    sendModes, attachFilename, phoneNumber
   });
 }
 
