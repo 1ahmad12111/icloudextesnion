@@ -10,6 +10,16 @@
     <h1>Newsletter Sender</h1>
 
     <section class="card">
+      <h2>Mail Provider</h2>
+      <label>
+        <select id="provider">
+          <option value="icloud">iCloud Mail</option>
+          <option value="tutanota">Tutanota (app.tuta.com)</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
       <h2>1. Email List</h2>
       <p class="hint">Paste emails (one per line) or upload a CSV/TXT file.</p>
       <textarea id="emailList" placeholder="alice@example.com&#10;bob@example.com" rows="5"></textarea>

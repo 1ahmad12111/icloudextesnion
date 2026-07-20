@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "iCloud Newsletter Sender",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Send your newsletter to a list of emails via iCloud Mail, one by one with a delay.",
   "permissions": [
     "storage",
@@ -13,7 +13,8 @@
   ],
   "host_permissions": [
     "https://*.icloud.com/*",
-    "https://*.icloud-sandbox.com/*"
+    "https://*.icloud-sandbox.com/*",
+    "https://app.tuta.com/*"
   ],
   "action": {
     "default_popup": "popup.html"
@@ -28,6 +29,12 @@
         "https://*.icloud-sandbox.com/*"
       ],
       "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": ["https://app.tuta.com/*"],
+      "js": ["tuta-content.js"],
       "run_at": "document_idle",
       "all_frames": true
     }

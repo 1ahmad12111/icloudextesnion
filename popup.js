@@ -1,3 +1,4 @@
+const providerEl   = document.getElementById('provider');
 const emailListEl  = document.getElementById('emailList');
 const fileInputEl  = document.getElementById('fileInput');
 const htmlFileInputEl = document.getElementById('htmlFileInput');
@@ -15,18 +16,19 @@ const progressText = document.getElementById('progressText');
 const logEl        = document.getElementById('log');
 
 // Restore saved draft
-chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails'], (data) => {
-  if (data.subject) subjectEl.value = data.subject;
-  if (data.body)    bodyEl.value    = data.body;
-  if (data.isHtml)  isHtmlEl.checked = data.isHtml;
-  if (data.delay)   delayEl.value   = data.delay;
-  if (data.emails)  { emailListEl.value = data.emails; updateCount(); }
+chrome.storage.local.get(['subject', 'body', 'isHtml', 'delay', 'emails', 'provider'], (data) => {
+  if (data.subject)  subjectEl.value = data.subject;
+  if (data.body)     bodyEl.value    = data.body;
+  if (data.isHtml)   isHtmlEl.checked = data.isHtml;
+  if (data.delay)    delayEl.value   = data.delay;
+  if (data.emails)   { emailListEl.value = data.emails; updateCount(); }
+  if (data.provider) providerEl.value = data.provider;
 });
 
 function saveDraft() {
-  chrome.storage.local.set({ subject: subjectEl.value, body: bodyEl.value, isHtml: isHtmlEl.checked, delay: delayEl.value, emails: emailListEl.value });
+  chrome.storage.local.set({ subject: subjectEl.value, body: bodyEl.value, isHtml: isHtmlEl.checked, delay: delayEl.value, emails: emailListEl.value, provider: providerEl.value });
 }
-[subjectEl, bodyEl, emailListEl, delayEl, isHtmlEl].forEach(el => el.addEventListener('change', saveDraft));
+[subjectEl, bodyEl, emailListEl, delayEl, isHtmlEl, providerEl].forEach(el => el.addEventListener('change', saveDraft));
 
 function getEmails() {
   return emailListEl.value.split(/[\n,;]+/).map(e => e.trim()).filter(e => e && e.includes('@'));
@@ -92,7 +94,8 @@ async function startSending() {
   const subject = subjectEl.value.trim();
   const body    = bodyEl.value.trim();
   const isHtml  = isHtmlEl.checked;
-  const delay   = Math.max(1, parseInt(delayEl.value, 10) || 5);
+  const delay    = Math.max(1, parseInt(delayEl.value, 10) || 5);
+  const provider = providerEl.value || 'icloud';
   if (!emails.length) { alert('Please enter at least one email address.'); return; }
   if (!subject)       { alert('Please enter a subject.'); return; }
   if (!body)          { alert('Please enter a message body or upload an HTML file.'); return; }
@@ -100,7 +103,7 @@ async function startSending() {
   logEl.innerHTML = '';
   progressCard.style.display = 'flex';
   setUI(true);
-  chrome.runtime.sendMessage({ action: 'startSending', emails, subject, body, isHtml, delay });
+  chrome.runtime.sendMessage({ action: 'startSending', emails, subject, body, isHtml, delay, provider });
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
