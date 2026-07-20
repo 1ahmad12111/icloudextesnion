@@ -7,6 +7,7 @@
 
   // ── Platform detection ────────────────────────────────────────────────────────
   const IS_TITAN = window.location.hostname.includes('titan.email');
+  const IS_TUTA  = window.location.hostname.includes('tuta.com');
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -144,8 +145,8 @@
   function diagnose() {
     const lines = [];
     lines.push('url: ' + window.location.href.substring(0, 80));
-    lines.push('platform: ' + (IS_TITAN ? 'titan' : 'icloud'));
-    lines.push('hasMailUI: ' + (IS_TITAN ? titanHasMailUI() : iCloudHasMailUI()));
+    lines.push('platform: ' + (IS_TUTA ? 'tuta' : IS_TITAN ? 'titan' : 'icloud'));
+    lines.push('hasMailUI: ' + (IS_TUTA ? tutaHasMailUI() : IS_TITAN ? titanHasMailUI() : iCloudHasMailUI()));
     const iframes = Array.from(document.querySelectorAll('iframe'));
     lines.push('iframes: ' + iframes.length);
     const btnLabels = Array.from(document.querySelectorAll('ui-button, button'))
@@ -609,18 +610,300 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // ── TUTANOTA helpers ──────────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function tutaHasMailUI() {
+    return !!(findTutaComposeBtn() ||
+      document.querySelector('.mail-list') ||
+      document.querySelector('[class*="MailList"]') ||
+      document.querySelector('[class*="inbox"]') ||
+      document.querySelector('button.primary'));
+  }
+
+  function findTutaComposeBtn() {
+    // Tuta's "New email" button — visible in the left sidebar
+    return Array.from(document.querySelectorAll('button, [role="button"]'))
+      .find(b => /new\s*(email|mail|message)/i.test(
+        (b.textContent || b.getAttribute('aria-label') || '').trim()
+      ) && b.offsetParent !== null);
+  }
+
+  function findTutaComposeWindow() {
+    // Tuta renders the compose dialog as a full-overlay panel
+    const selectors = [
+      '[class*="mail-editor"]',
+      '[class*="MailEditor"]',
+      '[class*="compose"]',
+      '[data-testid*="compose"]',
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el && el.offsetParent !== null) return el;
+      } catch(e) {}
+    }
+    // Fallback: any visible dialog/panel that contains a Subject input
+    const panels = Array.from(document.querySelectorAll('[role="dialog"], .dialog, .modal'))
+      .filter(el => el.offsetParent !== null);
+    for (const p of panels) {
+      if (p.querySelector('input[placeholder*="Subject" i]') ||
+          Array.from(p.querySelectorAll('button')).some(b => /^send$/i.test((b.textContent || '').trim()))) {
+        return p;
+      }
+    }
+    // Last resort: find Send button and walk up to its container
+    const sendBtn = Array.from(document.querySelectorAll('button'))
+      .find(b => /^send$/i.test((b.textContent || '').trim()) && b.offsetParent !== null);
+    return sendBtn ? sendBtn.closest('[class*="editor"],[class*="compose"],[class*="dialog"]') || sendBtn.parentElement : null;
+  }
+
+  function findTutaInput(labelText, compose) {
+    const root = compose || document;
+    // Try placeholder match first
+    const byPlaceholder = Array.from(root.querySelectorAll('input'))
+      .find(i => new RegExp(labelText, 'i').test(i.placeholder || '') && i.offsetParent !== null);
+    if (byPlaceholder) return byPlaceholder;
+    // Try aria-label match
+    const byAriaLabel = Array.from(root.querySelectorAll('input'))
+      .find(i => new RegExp(labelText, 'i').test(i.getAttribute('aria-label') || '') && i.offsetParent !== null);
+    if (byAriaLabel) return byAriaLabel;
+    // Try adjacent label text match
+    const labels = Array.from(root.querySelectorAll('label, .label, [class*="label"]'))
+      .filter(l => new RegExp('^' + labelText + ':?\\s*$', 'i').test((l.textContent || '').trim()));
+    for (const lbl of labels) {
+      const id = lbl.getAttribute('for');
+      if (id) {
+        const inp = document.getElementById(id);
+        if (inp) return inp;
+      }
+      const sib = lbl.nextElementSibling;
+      if (sib && sib.tagName === 'INPUT') return sib;
+      const parent = lbl.parentElement;
+      if (parent) {
+        const inp = parent.querySelector('input');
+        if (inp) return inp;
+      }
+    }
+    return null;
+  }
+
+  function findTutaBody(compose) {
+    const root = compose || document;
+    const editables = Array.from(root.querySelectorAll('[contenteditable="true"]'))
+      .filter(el => el.offsetParent !== null);
+    if (!editables.length) return null;
+    // Pick the tallest — that's the email body, not an address chip area
+    return editables.sort((a, b) =>
+      b.getBoundingClientRect().height - a.getBoundingClientRect().height
+    )[0];
+  }
+
+  function findTutaSendBtn(compose) {
+    const root = compose || document;
+    const inRoot = Array.from(root.querySelectorAll('button, [role="button"]'))
+      .find(b => /^send$/i.test((b.textContent || '').trim()) ||
+                 /^send$/i.test(b.getAttribute('aria-label') || ''));
+    if (inRoot) return inRoot;
+    return Array.from(document.querySelectorAll('button'))
+      .find(b => /^send$/i.test((b.textContent || '').trim()) && b.offsetParent !== null);
+  }
+
+  // Tuta — closeCompose
+  async function tutaCloseCompose() {
+    const compose = findTutaComposeWindow();
+    if (!compose) return { ok: true, closed: false };
+    // Look for a "Close"/"Discard"/"Cancel" button
+    const closeBtn = Array.from(compose.querySelectorAll('button, [role="button"]'))
+      .find(b => /close|cancel|discard|dismiss/i.test(
+        b.getAttribute('aria-label') || b.getAttribute('title') || b.textContent || ''
+      ) && b.offsetParent !== null);
+    if (closeBtn) { click(closeBtn); await sleep(500); return { ok: true, closed: true }; }
+    return { ok: true, closed: false };
+  }
+
+  // Tuta — openCompose
+  async function tutaOpenCompose() {
+    const btn = findTutaComposeBtn();
+    if (!btn) return { error: 'Tuta: "New email" button not found. DIAG: ' + diagnose() };
+    click(btn);
+
+    // Wait for compose window
+    let compose = null;
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      compose = findTutaComposeWindow();
+      if (compose) break;
+      await sleep(250);
+    }
+    if (!compose) return { error: 'Tuta: compose window did not open. DIAG: ' + diagnose() };
+    await sleep(600);
+
+    // Focus To field
+    const toField = findTutaInput('To', compose);
+    if (toField) { click(toField); await sleep(100); toField.focus(); }
+    return { ok: true };
+  }
+
+  // Tuta — focusToField
+  async function tutaFocusToField() {
+    const compose = findTutaComposeWindow();
+    const toField = findTutaInput('To', compose);
+    if (!toField) return { error: 'Tuta: To field not found' };
+    click(toField); await sleep(100); toField.focus();
+    return { ok: true };
+  }
+
+  // Tuta — focusBccField
+  // Tuta hides Cc/Bcc by default. The user navigates: Tab from To → lands on
+  // an expand button → Enter → Cc and Bcc rows appear. We replicate this via
+  // the debugger's Tab/Enter keypresses (sent from background.js), then here
+  // we just find and focus the Bcc input once it's visible.
+  // This function is called AFTER background.js has sent Tab+Enter via debugger.
+  async function tutaFocusBccField() {
+    // Give Tuta time to expand the Cc/Bcc rows after Tab+Enter
+    await sleep(500);
+
+    const compose = findTutaComposeWindow();
+
+    // First: try to find BCC input directly (already expanded)
+    let bccField = findTutaInput('Bcc', compose);
+    if (!bccField) {
+      // Not visible yet — try clicking any "Bcc" toggle link/button in the compose window
+      const bccToggle = Array.from((compose || document).querySelectorAll(
+        'button, [role="button"], span[tabindex], a, .expand'
+      )).find(b => /^bcc$/i.test((b.textContent || b.getAttribute('aria-label') || '').trim()) &&
+                   b.offsetParent !== null);
+      if (bccToggle) {
+        click(bccToggle);
+        await sleep(500);
+        bccField = findTutaInput('Bcc', compose);
+      }
+    }
+
+    if (!bccField) return { error: 'Tuta: BCC field not found after expansion' };
+    click(bccField); await sleep(150); bccField.focus();
+    return { ok: true };
+  }
+
+  // Tuta — fillSubject
+  async function tutaFillSubject(subject) {
+    const compose = findTutaComposeWindow();
+    const field = findTutaInput('Subject', compose);
+    if (!field) return { error: 'Tuta: Subject field not found. DIAG: ' + diagnose() };
+    await typeInto(field, subject);
+    await sleep(200);
+    try { field.blur(); } catch(e) {}
+    return { ok: true };
+  }
+
+  // Tuta — fillBody
+  async function tutaFillBody(body, isHtml) {
+    const compose = findTutaComposeWindow();
+    const ed = findTutaBody(compose);
+    if (!ed) return { error: 'Tuta: body editor not found. DIAG: ' + diagnose() };
+
+    click(ed); await sleep(200); ed.focus(); await sleep(150);
+
+    // Clear the default Tuta signature ("-- Secured with Tuta Mail: ...") first
+    try {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    } catch(e) {
+      try { ed.innerHTML = ''; } catch(e2) {}
+    }
+    await sleep(100);
+
+    if (isHtml) {
+      try {
+        document.execCommand('insertHTML', false, body);
+      } catch(e) {
+        try { ed.innerHTML = body; } catch(e2) {}
+      }
+    } else {
+      try {
+        document.execCommand('insertText', false, body);
+      } catch(e) {
+        try { ed.innerText = body; } catch(e2) {}
+      }
+    }
+    try { ed.dispatchEvent(new InputEvent('input', { bubbles: true })); } catch(e) {}
+    await sleep(200);
+    return { ok: true };
+  }
+
+  // Tuta — findAttachInput
+  function tutaFindAttachInput() {
+    const compose = findTutaComposeWindow();
+    const root = compose || document;
+    const inputs = Array.from(root.querySelectorAll('input[type="file"]'));
+    if (inputs.length > 0) return { found: true, count: inputs.length };
+    const all = Array.from(document.querySelectorAll('input[type="file"]'));
+    return { found: all.length > 0, count: all.length };
+  }
+
+  // Tuta — clickAttachBtn
+  async function tutaClickAttachBtn() {
+    const compose = findTutaComposeWindow();
+    const root = compose || document;
+    const btn = Array.from(root.querySelectorAll('button, [role="button"], label'))
+      .find(b => /attach|paperclip|file/i.test(
+        b.getAttribute('aria-label') || b.getAttribute('title') || b.getAttribute('data-testid') || ''
+      ) && b.offsetParent !== null);
+    if (btn) { click(btn); await sleep(500); return { ok: true, clicked: true }; }
+    return { ok: true, clicked: false };
+  }
+
+  // Tuta — clickSend
+  async function tutaClickSend() {
+    await sleep(600);
+    const compose = findTutaComposeWindow();
+    const sendBtn = findTutaSendBtn(compose);
+    if (!sendBtn) {
+      const allBtns = Array.from(document.querySelectorAll('button'))
+        .map(b => (b.textContent || '').trim()).filter(Boolean);
+      return { error: 'Tuta: Send button not found. Buttons: ' + JSON.stringify(allBtns.slice(0, 15)) };
+    }
+
+    // Poll up to 6s for the send button to become enabled
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      const disabled = sendBtn.disabled || sendBtn.getAttribute('aria-disabled') === 'true';
+      if (!disabled) break;
+      await sleep(400);
+    }
+
+    click(sendBtn);
+    await sleep(500);
+
+    // Dismiss any confirmation dialog (e.g. "Sending unencrypted?")
+    await sleep(300);
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+      .filter(el => el.offsetParent !== null);
+    for (const dlg of dialogs) {
+      const confirmBtn = Array.from(dlg.querySelectorAll('button'))
+        .find(b => /send|ok|confirm|yes|continue/i.test((b.textContent || '').trim()) &&
+                   b.offsetParent !== null);
+      if (confirmBtn) { click(confirmBtn); await sleep(300); }
+    }
+
+    return { ok: true };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // ── Unified dispatch (platform-aware) ────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
 
   function hasMailUI() {
-    return IS_TITAN ? titanHasMailUI() : iCloudHasMailUI();
+    return IS_TUTA ? tutaHasMailUI() : IS_TITAN ? titanHasMailUI() : iCloudHasMailUI();
   }
 
   // ── Message listener (self-unloading) ────────────────────────────────────────
 
   function _messageHandler(msg, _sender, sendResponse) {
     if (msg.action === 'ping') {
-      sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href, platform: IS_TITAN ? 'titan' : 'icloud' });
+      const platform = IS_TUTA ? 'tuta' : IS_TITAN ? 'titan' : 'icloud';
+      sendResponse({ ok: true, hasMailUI: hasMailUI(), url: window.location.href, platform });
       return true;
     }
     if (msg.action === 'init') {
@@ -633,47 +916,46 @@
     }
 
     if (msg.action === 'closeCompose') {
-      (IS_TITAN ? titanCloseCompose() : iCloudCloseCompose())
+      (IS_TUTA ? tutaCloseCompose() : IS_TITAN ? titanCloseCompose() : iCloudCloseCompose())
         .then(r => sendResponse(r)).catch(() => sendResponse({ ok: true, closed: false }));
       return true;
     }
     if (msg.action === 'openCompose') {
-      (IS_TITAN ? titanOpenCompose() : iCloudOpenCompose(msg.to))
+      (IS_TUTA ? tutaOpenCompose() : IS_TITAN ? titanOpenCompose() : iCloudOpenCompose(msg.to))
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'focusToField') {
-      (IS_TITAN ? titanFocusToField() : iCloudFocusToField())
+      (IS_TUTA ? tutaFocusToField() : IS_TITAN ? titanFocusToField() : iCloudFocusToField())
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'focusBccField') {
-      // Only Titan supports BCC field navigation
-      titanFocusBccField()
+      (IS_TUTA ? tutaFocusBccField() : titanFocusBccField())
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'fillSubject') {
-      (IS_TITAN ? titanFillSubject(msg.subject) : iCloudFillSubject(msg.subject))
+      (IS_TUTA ? tutaFillSubject(msg.subject) : IS_TITAN ? titanFillSubject(msg.subject) : iCloudFillSubject(msg.subject))
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'fillBody') {
-      (IS_TITAN ? titanFillBody(msg.body, msg.isHtml) : iCloudFillBody(msg.body, msg.isHtml))
+      (IS_TUTA ? tutaFillBody(msg.body, msg.isHtml) : IS_TITAN ? titanFillBody(msg.body, msg.isHtml) : iCloudFillBody(msg.body, msg.isHtml))
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message + ' DIAG: ' + diagnose() }));
       return true;
     }
     if (msg.action === 'findAttachInput') {
-      sendResponse(IS_TITAN ? titanFindAttachInput() : iCloudFindAttachInput());
+      sendResponse(IS_TUTA ? tutaFindAttachInput() : IS_TITAN ? titanFindAttachInput() : iCloudFindAttachInput());
       return true;
     }
     if (msg.action === 'clickAttachBtn') {
-      (IS_TITAN ? titanClickAttachBtn() : iCloudClickAttachBtn())
+      (IS_TUTA ? tutaClickAttachBtn() : IS_TITAN ? titanClickAttachBtn() : iCloudClickAttachBtn())
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (msg.action === 'clickSend') {
-      (IS_TITAN ? titanClickSend() : iCloudClickSend())
+      (IS_TUTA ? tutaClickSend() : IS_TITAN ? titanClickSend() : iCloudClickSend())
         .then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }

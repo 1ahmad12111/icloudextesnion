@@ -251,10 +251,11 @@ chunkDelayEl.addEventListener('input', () => { updateChunkHint(); saveDraft(); }
 // ── Toggle helpers ────────────────────────────────────────────────────────────
 
 function toggleBccModeRow() {
-  const isTitan = mailProviderEl.value === 'titan';
-  bccModeRowEl.style.display = isTitan ? '' : 'none';
-  if (!isTitan) bccModeEl.checked = false;
-  if (bccModeHintEl) bccModeHintEl.style.display = (isTitan && bccModeEl.checked && !chunkEnabledEl.checked) ? '' : 'none';
+  const provider = mailProviderEl.value;
+  const supportsBcc = provider === 'titan' || provider === 'tuta';
+  bccModeRowEl.style.display = supportsBcc ? '' : 'none';
+  if (!supportsBcc) bccModeEl.checked = false;
+  if (bccModeHintEl) bccModeHintEl.style.display = (supportsBcc && bccModeEl.checked && !chunkEnabledEl.checked) ? '' : 'none';
 }
 
 function toggleEntityRate() {

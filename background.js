@@ -477,6 +477,7 @@ async function attachFileToCompose(filePath, label) {
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
 async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename, mailProvider, bccMode }) {
+  const isTuta  = mailProvider === 'tuta';
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
@@ -504,7 +505,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   let sent = 0;
 
   const isTitan = mailProvider === 'titan';
-  mailTabId = await getOrOpenMailTab(isTitan);
+  mailTabId = await getOrOpenMailTab(isTitan, isTuta);
 
   try {
     await attachDebugger(mailTabId);
@@ -513,7 +514,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
     broadcast({ type: 'log', text: 'Debugger attach failed: ' + e.message, level: 'err' });
   }
 
-  broadcast({ type: 'log', text: 'Waiting for ' + (isTitan ? 'Titan Mail' : 'iCloud Mail') + ' to load...', level: 'info' });
+  const providerName = isTuta ? 'Tutanota' : isTitan ? 'Titan Mail' : 'iCloud Mail';
+  broadcast({ type: 'log', text: 'Waiting for ' + providerName + ' to load...', level: 'info' });
   await sleep(3000);
 
   // Inject content script with a unique run ID so stale instances self-unload
@@ -530,9 +532,9 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
   } catch(e) {}
   await sleep(1000);
 
-  const mailFrameId = await findMailFrame(isTitan);
+  const mailFrameId = await findMailFrame(isTitan, isTuta);
   if (mailFrameId === null) {
-    broadcast({ type: 'log', text: 'Could not find ' + (isTitan ? 'Titan Mail' : 'iCloud Mail') + ' UI frame. Are you logged in?', level: 'err' });
+    broadcast({ type: 'log', text: 'Could not find ' + providerName + ' UI frame. Are you logged in?', level: 'err' });
     broadcast({ type: 'done', sent: 0, total });
     return;
   }
@@ -627,8 +629,18 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       // Extra delay + re-focus prevents typing landing in the wrong field
       await sleep(500);
 
-      if (bccMode && isTitan) {
-        // BCC mode: expand the BCC field and type all recipients there
+      if (bccMode && (isTitan || isTuta)) {
+        if (isTuta) {
+          // Tuta hides Cc/Bcc behind an expand toggle.
+          // First focus To field, then Tab to the expand control, Enter to open.
+          await sendToFrame(mailFrameId, { action: 'focusToField' });
+          await sleep(400);
+          await sendDebuggerTab(mailTabId);
+          await sleep(300);
+          await sendDebuggerEnter(mailTabId);
+          await sleep(500);
+        }
+        // Now ask content script to focus the (now-visible) BCC field
         const bccResult = await sendToFrame(mailFrameId, { action: 'focusBccField' });
         if (bccResult && bccResult.error) throw new Error(bccResult.error);
         broadcast({ type: 'log', text: 'BCC field focused.', level: 'info' });
@@ -667,8 +679,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         const modeLabel = sendMode.toUpperCase();
         await attachFileToCompose(attachFilePath, modeLabel);
         await sleep(2500);
-      } else if (isTitan) {
-        // Titan Mail: single-page app with no iframes — fill body directly in main frame
+      } else if (isTitan || isTuta) {
+        // Titan/Tuta: single-page apps with no iframes — fill body directly in main frame
         await sleep(300);
         const bodyResult = await sendToFrame(mailFrameId, { action: 'fillBody', body: bodyForSend, isHtml });
         if (bodyResult && bodyResult.error) throw new Error(bodyResult.error);
@@ -726,9 +738,9 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
 
 // ── Frame helpers ─────────────────────────────────────────────────────────────
 
-async function findMailFrame(isTitan) {
-  if (isTitan) {
-    // Titan Mail is a single-page app with no iframes — always main frame (0)
+async function findMailFrame(isTitan, isTuta) {
+  if (isTitan || isTuta) {
+    // Titan/Tuta are single-page apps with no iframes — always main frame (0)
     const result = await sendToFrame(0, { action: 'ping' });
     return (result && result.ok) ? 0 : null;
   }
@@ -774,7 +786,41 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function getOrOpenMailTab(isTitan) {
+async function getOrOpenMailTab(isTitan, isTuta) {
+  if (isTuta) {
+    const allTabs = await chrome.tabs.query({ url: 'https://app.tuta.com/*' });
+    const mailTab = allTabs[0] || null;
+    if (mailTab) {
+      broadcast({ type: 'log', text: 'Found Tutanota tab (id ' + mailTab.id + ').', level: 'info' });
+      await detachDebugger();
+      const popup = await chrome.windows.create({
+        tabId: mailTab.id,
+        type: 'popup',
+        width: 900,
+        height: 700,
+        focused: false,
+      }).catch(() => null);
+      if (!popup) await chrome.tabs.update(mailTab.id, { active: true });
+      await sleep(1000);
+      return mailTab.id;
+    }
+    broadcast({ type: 'log', text: 'No Tutanota tab found — opening one...', level: 'info' });
+    const popup = await chrome.windows.create({
+      url: 'https://app.tuta.com/',
+      type: 'popup',
+      width: 900,
+      height: 700,
+      focused: false,
+    }).catch(() => null);
+    if (popup && popup.tabs && popup.tabs[0]) {
+      await sleep(8000);
+      return popup.tabs[0].id;
+    }
+    const tab = await chrome.tabs.create({ url: 'https://app.tuta.com/' });
+    await sleep(8000);
+    return tab.id;
+  }
+
   if (isTitan) {
     const allTabs = await chrome.tabs.query({ url: 'https://*.titan.email/*' });
     const mailTab = allTabs[0] || null;

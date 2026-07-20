@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "iCloud Newsletter Sender",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Send your newsletter via iCloud Mail or Titan Mail, one by one with a delay.",
   "permissions": [
     "storage",
@@ -17,7 +17,8 @@
   "host_permissions": [
     "https://*.icloud.com/*",
     "https://*.icloud-sandbox.com/*",
-    "https://*.titan.email/*"
+    "https://*.titan.email/*",
+    "https://app.tuta.com/*"
   ],
   "action": {},
   "background": {
@@ -28,7 +29,8 @@
       "matches": [
         "https://*.icloud.com/*",
         "https://*.icloud-sandbox.com/*",
-        "https://*.titan.email/*"
+        "https://*.titan.email/*",
+        "https://app.tuta.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle",
