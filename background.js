@@ -630,17 +630,8 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       await sleep(500);
 
       if (bccMode && (isTitan || isTuta)) {
-        if (isTuta) {
-          // Tuta hides Cc/Bcc behind an expand toggle.
-          // First focus To field, then Tab to the expand control, Enter to open.
-          await sendToFrame(mailFrameId, { action: 'focusToField' });
-          await sleep(400);
-          await sendDebuggerTab(mailTabId);
-          await sleep(300);
-          await sendDebuggerEnter(mailTabId);
-          await sleep(500);
-        }
-        // Now ask content script to focus the (now-visible) BCC field
+        // focusBccField handles expand internally (Tuta clicks the ▼ chevron,
+        // Titan clicks the Bcc toggle button) before focusing the BCC input.
         const bccResult = await sendToFrame(mailFrameId, { action: 'focusBccField' });
         if (bccResult && bccResult.error) throw new Error(bccResult.error);
         broadcast({ type: 'log', text: 'BCC field focused.', level: 'info' });

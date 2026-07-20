@@ -755,30 +755,81 @@
   }
 
   // Tuta — focusBccField
-  // Tuta hides Cc/Bcc by default. The user navigates: Tab from To → lands on
-  // an expand button → Enter → Cc and Bcc rows appear. We replicate this via
-  // the debugger's Tab/Enter keypresses (sent from background.js), then here
-  // we just find and focus the Bcc input once it's visible.
-  // This function is called AFTER background.js has sent Tab+Enter via debugger.
+  // Tuta hides Cc/Bcc behind a ▼ chevron/dropdown button to the right of the
+  // To field. Clicking it expands the Cc and Bcc rows. We try several strategies
+  // to find and click that expand button before focusing the Bcc input.
   async function tutaFocusBccField() {
-    // Give Tuta time to expand the Cc/Bcc rows after Tab+Enter
-    await sleep(500);
-
     const compose = findTutaComposeWindow();
 
-    // First: try to find BCC input directly (already expanded)
+    // Strategy 1: BCC is already visible (e.g. previously expanded)
     let bccField = findTutaInput('Bcc', compose);
-    if (!bccField) {
-      // Not visible yet — try clicking any "Bcc" toggle link/button in the compose window
-      const bccToggle = Array.from((compose || document).querySelectorAll(
-        'button, [role="button"], span[tabindex], a, .expand'
-      )).find(b => /^bcc$/i.test((b.textContent || b.getAttribute('aria-label') || '').trim()) &&
-                   b.offsetParent !== null);
-      if (bccToggle) {
-        click(bccToggle);
-        await sleep(500);
-        bccField = findTutaInput('Bcc', compose);
+    if (bccField && bccField.offsetParent !== null) {
+      click(bccField); await sleep(150); bccField.focus();
+      return { ok: true };
+    }
+
+    // Strategy 2: find the expand/chevron button adjacent to the To row.
+    // Tuta renders a small ▼ button to the right of the To input field.
+    const root = compose || document;
+
+    // Look for a button that is: (a) inside the To row area, (b) visually a chevron
+    const toInput = findTutaInput('To', root);
+    let expandBtn = null;
+    if (toInput) {
+      // Walk up to the To field's row container and find a sibling button
+      const toRow = toInput.closest('[class*="row"], [class*="field"], li, div') || toInput.parentElement;
+      if (toRow) {
+        // The expand button is often a sibling or nearby element — it may be a button,
+        // an icon, or any element with a chevron class/title
+        expandBtn = Array.from(toRow.querySelectorAll('button, [role="button"], [tabindex]'))
+          .find(b => b !== toInput && b.offsetParent !== null);
+        // Also check the parent's siblings
+        if (!expandBtn && toRow.parentElement) {
+          expandBtn = Array.from(toRow.parentElement.querySelectorAll('button, [role="button"]'))
+            .find(b => b !== toInput && b.offsetParent !== null &&
+                       !b.textContent.trim() || /▼|›|chevron|expand|more|cc|bcc/i.test(
+                         b.getAttribute('aria-label') || b.getAttribute('title') || b.className || b.textContent || ''
+                       ));
+        }
       }
+    }
+
+    // Strategy 3: scan the whole compose for any expand/chevron button near the top
+    if (!expandBtn) {
+      expandBtn = Array.from(root.querySelectorAll('button, [role="button"], [tabindex="0"]'))
+        .find(b => b.offsetParent !== null && /▼|chevron|expand|cc|bcc|more\s*option/i.test(
+          b.getAttribute('aria-label') || b.getAttribute('title') || b.className || ''
+        ));
+    }
+
+    // Strategy 4: the button with a downward-pointing SVG path near the To area
+    if (!expandBtn) {
+      const allBtns = Array.from(root.querySelectorAll('button, [role="button"]'))
+        .filter(b => b.offsetParent !== null && b.querySelector('svg'));
+      // Pick the one closest (in DOM order) to the To input
+      if (toInput && allBtns.length) {
+        expandBtn = allBtns.find(b => {
+          const rect = b.getBoundingClientRect();
+          const toRect = toInput.getBoundingClientRect();
+          // Same vertical band as the To field
+          return Math.abs(rect.top - toRect.top) < 60 && rect.left > toRect.right - 10;
+        }) || allBtns[0];
+      }
+    }
+
+    if (expandBtn) {
+      click(expandBtn);
+      await sleep(600);
+    }
+
+    // After expanding, find and focus the BCC field
+    bccField = findTutaInput('Bcc', compose);
+    if (!bccField) {
+      // One more attempt — label-based scan
+      const allInputs = Array.from((compose || document).querySelectorAll('input'))
+        .filter(i => i.offsetParent !== null);
+      // BCC is usually the 3rd input: To, Cc, Bcc
+      bccField = allInputs[2] || null;
     }
 
     if (!bccField) return { error: 'Tuta: BCC field not found after expansion' };
