@@ -60,14 +60,18 @@ function generateMatchingId(original) {
 }
 
 // ── Email Generator ───────────────────────────────────────────────────────────
-// Generates unique, realistic support emails derived from the merchant name.
-// Three levers keep the space ~960k+ combinations per merchant:
-//   1. Numeric suffixes on prefixes (×~1000)
-//   2. Domain variants from the merchant name (×4)
-//   3. In-session deduplication Set — guaranteed no repeat per send run
+// Generates unique, readable support emails derived from the merchant name.
+// Every address is composed only of real words (no digits, hyphens, or symbols)
+// so it reads naturally, e.g. billing@evolvesolutions.com.
+// Uniqueness per send run comes from:
+//   1. Email prefix words (×22) — info, support, billing, orders, …
+//   2. Domain word combinations from the merchant name (prefix × anchor × suffix)
+//   3. Normal TLDs only — com, net, org
+//   4. In-session deduplication Set — guaranteed no repeat per send run
 
 const _EMAIL_PREFIXES = ['info','support','billing','hello','contact','sales','service','orders','noreply','admin','help','accounts','team','care','desk','office','reply','invoice','payments','notify','alerts','updates'];
-const _EMAIL_TLDS     = ['com','net','org','io','co','us','biz','email','online','store'];
+// Normal, widely-recognised TLDs only — keeps generated emails readable and legitimate-looking.
+const _EMAIL_TLDS     = ['com','net','org'];
 
 // In-memory dedup sets — cleared at the start of each send run via resetEmailDedup()
 const _usedEmails  = new Set();
@@ -80,7 +84,7 @@ function resetEmailDedup() {
 
 function _domainFromName(name) {
   return name
-    .replace(/(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\.?/gi, '')
+    .replace(/\b(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\b\.?/gi, '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
     .slice(0, 24);
@@ -88,7 +92,7 @@ function _domainFromName(name) {
 
 function _acronymFromName(name) {
   return name
-    .replace(/(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\.?/gi, '')
+    .replace(/\b(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\b\.?/gi, '')
     .trim()
     .split(/\s+/)
     .map(w => w[0] || '')
@@ -106,7 +110,7 @@ function _anchors(name) {
   const full      = _domainFromName(name);
   const acronym   = _acronymFromName(name);
   const words     = name
-    .replace(/(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\.?/gi, '')
+    .replace(/\b(LLC|Ltd|Inc|Corp|Co|Limited|PLC|GmbH)\b\.?/gi, '')
     .trim().toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(Boolean);
   const firstWord = words[0] || full;
 
@@ -115,60 +119,65 @@ function _anchors(name) {
   return [...new Set(candidates)];
 }
 
-// Build one candidate domain string — always contains the merchant anchor
+// Build one candidate domain string — always contains the merchant anchor.
+// Parts are concatenated into a single readable word (no hyphens, no digits),
+// e.g. "evolvesolutions", "getevolvesolutions", "evolvesolutionsgroup".
 function _buildDomain(anchorList) {
   const anchor  = anchorList[Math.floor(Math.random() * anchorList.length)];
   const usePrefix  = Math.random() < 0.30;
   const useSuffix  = Math.random() < 0.50;
-  const useNumber  = Math.random() < 0.40;
   const prefix  = usePrefix  ? _DOM_PREFIXES[Math.floor(Math.random() * _DOM_PREFIXES.length)] : '';
   const suffix  = useSuffix  ? _DOM_SUFFIXES[Math.floor(Math.random() * _DOM_SUFFIXES.length)] : '';
-  const number  = useNumber  ? String(Math.floor(Math.random() * 9999) + 1) : '';
 
-  // Assemble: [prefix-]anchor[-suffix][number]
-  let domain = '';
-  if (prefix) domain += prefix + '-';
-  domain += anchor;
-  if (suffix) domain += '-' + suffix;
-  domain += number;
-  return domain;
+  // Assemble: [prefix]anchor[suffix] — one clean, pronounceable token.
+  return prefix + anchor + suffix;
 }
 
-// Generate a domain that has never been used in this send run
+// Generate a domain that has never been used in this send run.
+// Uniqueness comes from prefix/suffix/anchor word combinations, not digits,
+// so every domain stays readable.
 function _uniqueDomain(anchorList) {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const d = _buildDomain(anchorList);
     if (!_usedDomains.has(d)) {
       _usedDomains.add(d);
       return d;
     }
   }
-  // Guaranteed-unique fallback: anchor + high-entropy number
-  const anchor   = anchorList[0];
-  const fallback = anchor + String(Math.floor(Math.random() * 900000) + 100000);
-  _usedDomains.add(fallback);
-  return fallback;
-}
-
-// Lever 1: optionally append a 1–3 digit suffix to a prefix (~30% chance)
-function _prefixWithSuffix(prefix) {
-  if (Math.random() < 0.3) return prefix;
-  const digits = Math.floor(Math.random() * 900) + 1; // 1–900
-  return prefix + String(digits);
+  // Readable fallback: exhaustively combine anchor with each suffix word.
+  const anchor = anchorList[0];
+  for (const suffix of _DOM_SUFFIXES) {
+    const d = anchor + suffix;
+    if (!_usedDomains.has(d)) {
+      _usedDomains.add(d);
+      return d;
+    }
+  }
+  // Last-resort fallback (extremely unlikely): prefix+anchor+suffix pairs.
+  for (const prefix of _DOM_PREFIXES) {
+    for (const suffix of _DOM_SUFFIXES) {
+      const d = prefix + anchor + suffix;
+      if (!_usedDomains.has(d)) {
+        _usedDomains.add(d);
+        return d;
+      }
+    }
+  }
+  _usedDomains.add(anchor);
+  return anchor;
 }
 
 function generateEmail(sellerName) {
   const anchorList = _anchors(sellerName);
   const domain     = _uniqueDomain(anchorList);           // always unique per send
   const tld        = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
-  const basePrefix = _EMAIL_PREFIXES[Math.floor(Math.random() * _EMAIL_PREFIXES.length)];
-  const prefix     = _prefixWithSuffix(basePrefix);
-  const acronym    = _acronymFromName(sellerName);
+  const prefix     = _EMAIL_PREFIXES[Math.floor(Math.random() * _EMAIL_PREFIXES.length)];
+  const anchor     = anchorList[0];
 
+  // Readable styles only — no digits, no acronyms, no symbols.
   const styles = [
     `${prefix}@${domain}.${tld}`,
-    `${prefix}.${acronym}@${domain}.${tld}`,
-    `${acronym}.${prefix}@${domain}.${tld}`,
+    `${anchor}.${prefix}@${domain}.${tld}`,
     `${prefix}@${domain}.${tld}`,                         // plain style repeated intentionally for weight
   ];
   return styles[Math.floor(Math.random() * styles.length)];
@@ -177,15 +186,25 @@ function generateEmail(sellerName) {
 // Full dedup wrapper — domain is already unique (via _uniqueDomain inside generateEmail).
 // This Set guards the complete email address as a final safety net.
 function generateUniqueEmail(sellerName) {
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 100; i++) {
     const email = generateEmail(sellerName);
     if (!_usedEmails.has(email)) {
       _usedEmails.add(email);
       return email;
     }
   }
-  // Guaranteed-unique fallback
-  const fallback = generateEmail(sellerName).replace('@', Math.floor(Math.random() * 9000 + 1000) + '@');
+  // Readable fallback: pair every prefix with the seller anchor as the local part.
+  const anchor = _anchors(sellerName)[0];
+  const tld    = _EMAIL_TLDS[Math.floor(Math.random() * _EMAIL_TLDS.length)];
+  for (const prefix of _EMAIL_PREFIXES) {
+    const email = `${prefix}.${anchor}@${_uniqueDomain(_anchors(sellerName))}.${tld}`;
+    if (!_usedEmails.has(email)) {
+      _usedEmails.add(email);
+      return email;
+    }
+  }
+  // Final guard — still readable, just reuses the freshest unique domain.
+  const fallback = `${anchor}@${_uniqueDomain(_anchors(sellerName))}.${tld}`;
   _usedEmails.add(fallback);
   return fallback;
 }
