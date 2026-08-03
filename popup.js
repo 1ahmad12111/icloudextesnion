@@ -60,7 +60,7 @@ function detectIds(html) {
   const plain = _toPlain(html);
   const txnMatch  = plain.match(/Transaction\s+ID\s*[:\s]+([A-Z0-9\-\._]*\d[A-Z0-9\-\._]*)/i);
   const invMatch  = plain.match(/(?:Invoice|Order)\s+ID\s*[:\s]+([A-Z0-9\-\._]*\d[A-Z0-9\-\._]*)/i);
-  const dateMatch = plain.match(/Transaction\s+[Dd]ate\s*[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
+  const dateMatch = plain.match(/Transaction\s+[Dd]ate\s*[:\s]+(?:Transaction\s+ID\s*:\s*)?([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
 
   // Primary: terminators are known section keywords
   let sellerMatch = plain.match(/(?:Seller|Merchant|Vendor|Company|Payee|Store|Retailer|Business)\s*[:\s]+([A-Za-z0-9 &.,'\-]{3,60}?)\s*(?:Instructions|support|Transaction|Order|Invoice|\(|$)/i);
