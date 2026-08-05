@@ -351,14 +351,15 @@ function _replaceEmailSplitTags(html, oldEmail, newEmail) {
 
 // ── Main per-email randomizer ─────────────────────────────────────────────────
 // Called once per email in the send loop.
-// detected: { txnValue, invValue, dateValue, sellerName, emailValue }
+// detected: { txnValue, invValue, dateValue, sellerName, emailValue, phoneValue }
 // fixedDateIso: "2026-06-18" string set by user in popup
+// newPhone: replacement phone string (null/empty = skip)
 
-function randomizeIds(html, detected, fixedDateIso) {
+function randomizeIds(html, detected, fixedDateIso, newPhone) {
   let out = html;
   const log = [];
 
-  const { txnValue, invValue, dateValue, sellerName, emailValue, emailHref } = detected;
+  const { txnValue, invValue, dateValue, sellerName, emailValue, emailHref, phoneValue } = detected;
 
   let newTxnId = null;
   let newInvId = null;
@@ -422,6 +423,22 @@ function randomizeIds(html, detected, fixedDateIso) {
     }
 
     if (emailReplaced) log.push('Email: ' + primaryEmail + ' → ' + newEmail);
+  }
+
+  // Helpline phone (fixed replacement — only when user entered a new number)
+  if (newPhone && phoneValue) {
+    const r = replaceValue(out, phoneValue, newPhone);
+    out = r.out;
+    // Also replace the tel: href variant (digits only, with +1 country code)
+    const oldDigits = phoneValue.replace(/[^\d]/g, '');
+    const newDigits = newPhone.replace(/[^\d]/g, '');
+    const telVariants = ['+1' + oldDigits, oldDigits];
+    for (const tv of telVariants) {
+      if (out.includes(tv)) {
+        out = out.split(tv).join('+1' + newDigits);
+      }
+    }
+    if (r.count > 0) log.push('Phone: ' + phoneValue + ' → ' + newPhone);
   }
 
   return { out, log, newTxnId, newInvId };

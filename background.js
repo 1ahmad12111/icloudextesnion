@@ -476,7 +476,7 @@ async function attachFileToCompose(filePath, label) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 
-async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename }) {
+async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize, randomize, entityEncode, entityRate, idRandomize, idDetected, fixedDateIso, newPhone, chunkEnabled, chunkSize, chunkDelay, sendModes, attachFilename }) {
   const total = emails.length;
   batchSize  = batchSize  || 10;
   chunkSize  = chunkSize  || 10;
@@ -578,7 +578,7 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
       let generatedInvId = null;
 
       if (idRandomize && idDetected) {
-        const { out, log, newTxnId, newInvId } = randomizeIds(body, idDetected, fixedDateIso);
+        const { out, log, newTxnId, newInvId } = randomizeIds(body, idDetected, fixedDateIso, newPhone);
         body = out;
         generatedTxnId = newTxnId;
         generatedInvId = newInvId;

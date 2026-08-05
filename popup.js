@@ -20,6 +20,7 @@ const idRandomizePanelEl = document.getElementById('idRandomizePanel');
 const idDetectedBoxEl = document.getElementById('idDetectedBox');
 const idDateInputEl   = document.getElementById('idDateInput');
 const idDateTodayBtn  = document.getElementById('idDateToday');
+const newPhoneInputEl = document.getElementById('newPhoneInput');
 const modeListEl      = document.getElementById('modeList');
 const modeAddEl       = document.getElementById('modeAdd');
 const modeAddBtnEl    = document.getElementById('modeAddBtn');
@@ -86,6 +87,12 @@ function detectIds(html) {
                    ? emailMatchHref[0].trim()
                    : null;
 
+  // Helpline phone: look for (XXX) XXX XXXX or XXX-XXX-XXXX patterns in the
+  // visible text, skipping the known PayPal customer service number.
+  const PAYPAL_CS = '888-221-1161';
+  const phoneMatches = plain.match(/\(\d{3}\)\s*\d{3}\s+\d{4}|\(\d{3}\)\s*\d{3}-\d{4}|\b\d{3}-\d{3}-\d{4}\b/g) || [];
+  const phoneValue = phoneMatches.find(p => p.replace(/[\s()\-]/g, '') !== PAYPAL_CS.replace(/-/g, '')) || null;
+
   return {
     txnValue:   txnMatch    ? txnMatch[1].trim()    : null,
     invValue:   invMatch    ? invMatch[1].trim()     : null,
@@ -93,6 +100,7 @@ function detectIds(html) {
     sellerName: sellerMatch ? sellerMatch[1].trim()  : null,
     emailValue,
     emailHref,
+    phoneValue,
   };
 }
 
@@ -122,6 +130,7 @@ function renderIdDetectedBox(detected) {
     ['Date',           detected.dateValue],
     ['Seller',         detected.sellerName],
     ['Support Email',  detected.emailValue],
+    ['Helpline',       detected.phoneValue],
   ];
   const found = rows.filter(([, v]) => v);
   if (!found.length) {
@@ -167,7 +176,7 @@ chrome.runtime.sendMessage({ action: 'getStatus' }, (status) => {
 chrome.storage.local.get([
   'subjectList', 'body', 'isHtml', 'delay', 'emails',
   'batchSize', 'htmlVersions', 'randomizeHtml', 'entityEncode', 'entityRate',
-  'idRandomize', 'idDetected', 'fixedDateIso',
+  'idRandomize', 'idDetected', 'fixedDateIso', 'newPhone',
   'chunkEnabled', 'chunkSize', 'chunkDelay',
   'sendModes', 'attachFilename'
 ], (data) => {
@@ -186,6 +195,7 @@ chrome.storage.local.get([
   if (data.idRandomize) { idRandomizeEl.checked = true; toggleIdPanel(); }
   if (data.idDetected)  { idDetected = data.idDetected; renderIdDetectedBox(idDetected); }
   if (data.fixedDateIso) idDateInputEl.value = data.fixedDateIso;
+  if (data.newPhone) newPhoneInputEl.value = data.newPhone;
   if (data.chunkEnabled) { chunkEnabledEl.checked = true; toggleChunkPanel(); }
   if (data.chunkSize)  chunkSizeEl.value  = data.chunkSize;
   if (data.chunkDelay) chunkDelayEl.value = data.chunkDelay;
@@ -213,6 +223,7 @@ function saveDraft() {
     idRandomize:   idRandomizeEl.checked,
     idDetected,
     fixedDateIso:  idDateInputEl.value || null,
+    newPhone:      newPhoneInputEl.value.trim() || null,
     chunkEnabled:  chunkEnabledEl.checked,
     chunkSize:     Number(chunkSizeEl.value) || 10,
     chunkDelay:    Number(chunkDelayEl.value) || 5,
@@ -234,6 +245,7 @@ attachFilenameEl.addEventListener('input', saveDraft);
 idRandomizeEl.addEventListener('change', () => { toggleIdPanel(); saveDraft(); });
 idDateInputEl.addEventListener('change', saveDraft);
 idDateTodayBtn.addEventListener('click', () => { idDateInputEl.value = _todayIso(); saveDraft(); });
+newPhoneInputEl.addEventListener('input', saveDraft);
 chunkEnabledEl.addEventListener('change', () => { toggleChunkPanel(); saveDraft(); });
 chunkSizeEl.addEventListener('input',  () => { updateChunkHint(); saveDraft(); });
 chunkDelayEl.addEventListener('input', () => { updateChunkHint(); saveDraft(); });
@@ -459,6 +471,7 @@ async function startSending() {
   const entityRate   = Number(entityRateEl.value) / 100;
   const idRandomize  = idRandomizeEl.checked;
   const fixedDateIso = idDateInputEl.value || null;
+  const newPhone     = newPhoneInputEl.value.trim() || null;
   const chunkEnabled   = chunkEnabledEl.checked;
   const chunkSize      = Math.max(1, parseInt(chunkSizeEl.value, 10) || 10);
   const chunkDelay     = Math.max(1, parseInt(chunkDelayEl.value, 10) || 5);
@@ -495,7 +508,7 @@ async function startSending() {
     emails, subjects, bodies,
     isHtml: useHtml, delay, batchSize,
     randomize, entityEncode, entityRate,
-    idRandomize, idDetected, fixedDateIso,
+    idRandomize, idDetected, fixedDateIso, newPhone,
     chunkEnabled, chunkSize, chunkDelay,
     sendModes, attachFilename
   });
