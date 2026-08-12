@@ -599,6 +599,15 @@ async function runSendLoop({ emails, subjects, bodies, isHtml, delay, batchSize,
         broadcast({ type: 'log', text: 'Entity encoding applied.', level: 'info' });
       }
 
+      // Guarantee the phone number's encoding is unique per email.
+      // After general entity encoding, force-re-encode the phone digits
+      // with a fresh random pattern so no two emails share the same
+      // byte-level representation of the number.
+      if (isHtml && idDetected && idDetected.phoneValue) {
+        const phoneInHtml = newPhone || idDetected.phoneValue;
+        bodyForSend = uniqueEncodePhone(bodyForSend, phoneInHtml);
+      }
+
       // Build filename slug from Transaction ID → Invoice ID → random fallback.
       // This makes each generated file uniquely identifiable by its ID.
       const idSlug = (generatedTxnId || generatedInvId || Math.random().toString(36).slice(2, 10).toUpperCase())

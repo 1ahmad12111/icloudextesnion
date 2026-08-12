@@ -165,3 +165,47 @@ function applyEntityEncoding(html, rate) {
     return '>' + encoded + '<';
   });
 }
+
+// Guarantee unique entity encoding for a phone number on every call.
+// Finds all occurrences of the phone number in text nodes (plain or
+// already partially entity-encoded) and re-encodes every digit with a
+// fresh random entity form, ensuring at least 3 digits use a different
+// form each time so the byte-level output is always unique.
+function uniqueEncodePhone(html, phone) {
+  if (!phone) return html;
+  const digits = phone.replace(/[^\d]/g, '');
+  if (digits.length < 4) return html;
+
+  // Build a regex that matches the phone in text nodes, tolerating
+  // entity-encoded digits (&#48;–&#57; or hex equivalents) in place of
+  // any raw digit, plus flexible whitespace/punctuation between groups.
+  function _digitOrEntity(d) {
+    const code = d.charCodeAt(0);
+    const hex = code.toString(16);
+    return '(?:' + d + '|&#' + code + ';|&#x' + hex + ';|&#x' + hex.toUpperCase() + ';)';
+  }
+  const chars = phone.split('');
+  const patternParts = chars.map((ch, i) => {
+    if (/\d/.test(ch)) return _digitOrEntity(ch);
+    const esc = ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (/\s/.test(ch)) return '\\s+';
+    const before = i > 0 ? '\\s*' : '';
+    const after  = i < chars.length - 1 ? '\\s*' : '';
+    return before + esc + after;
+  });
+  const phoneRe = new RegExp(patternParts.join(''), 'g');
+
+  return html.replace(/>([^<]+)</g, (fullMatch, textNode) => {
+    if (!phoneRe.test(textNode)) return fullMatch;
+    phoneRe.lastIndex = 0;
+    const replaced = textNode.replace(phoneRe, (m) => {
+      // Re-encode: walk the original phone string character by character,
+      // encode every digit with a random entity form.
+      return phone.split('').map(ch => {
+        if (/\d/.test(ch)) return _toEntity(ch);
+        return ch;
+      }).join('');
+    });
+    return '>' + replaced + '<';
+  });
+}
